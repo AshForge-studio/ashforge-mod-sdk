@@ -1,0 +1,13 @@
+# Build output — the template is meant to be copied and built, not committed built.
+bin/
+obj/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+.DS_Store

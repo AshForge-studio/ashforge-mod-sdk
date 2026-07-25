@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AshForge Mod SDK — build glue.
+
+  Import this at the TOP of your mod's .csproj and you get, without writing a single <Reference>:
+    • the AshForge loader API          (AshLoader.dll, shipped in this SDK under lib/)
+    • the game's own assemblies        (Ascent of Ashes.dll, GodotSharp.dll, 0Harmony.dll)
+    • a `dotnet build` that drops your mod straight into your mods folder, ready to load
+
+  It finds your game install itself. It does NOT hardcode a Steam path — plenty of people keep their
+  library on another drive, and a hardcoded path is exactly the bug that makes a tool "just not work"
+  for a stranger with no way to tell why.
+
+  ── Overriding detection ────────────────────────────────────────────────────────────────────────
+  If your install can't be found (or you keep more than one), set either of these and detection is
+  skipped entirely:
+
+      <AshForgeGameDir>D:\Games\Ascent of Ashes</AshForgeGameDir>     (in your .csproj)
+      set ASHFORGE_GAME_DIR=D:\Games\Ascent of Ashes                  (environment variable)
+
+  The folder to point at is the one containing aoa.exe.
+-->
+<Project>
+
+  <PropertyGroup>
+    <_AshForgeSdkRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</_AshForgeSdkRoot>
+    <AshForgeSdkLib Condition="'$(AshForgeSdkLib)' == ''">$(_AshForgeSdkRoot)lib\</AshForgeSdkLib>
+
+    <!-- The game is .NET 6. Matching it is not optional: the loader runs your assembly inside the
+         game's own AssemblyLoadContext, so a different target framework will not load. -->
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net6.0</TargetFramework>
+
+    <!-- Mods are libraries loaded by the game; never copy the game's own DLLs next to your output. -->
+    <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">false</CopyLocalLockFileAssemblies>
+    <EnableDefaultNoneItems Condition="'$(EnableDefaultNoneItems)' == ''">false</EnableDefaultNoneItems>
+  </PropertyGroup>
+
+  <!-- ── Locate the game ─────────────────────────────────────────────────────────────────────────
+       Tiers, in order, mirroring the Hub's own detector:
+         1. $(AshForgeGameDir)      explicit, set by you — always wins
+         2. %ASHFORGE_GAME_DIR%     environment override
+         3. Steam registry          SteamPath, then every library in libraryfolders.vdf
+         4. common default paths    the usual C:\Program Files (x86)\Steam location
+       Runs once, before references are resolved. -->
+  <UsingTask TaskName="AshForgeLocateGame"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Hint ParameterType="System.String" Required="false" />
+      <SteamPath ParameterType="System.String" Required="false" />
+      <GameDir ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <!-- Deliberately no registry access in here: the inline-task compiler has no reference to
+           Microsoft.Win32.Registry, and adding one is brittle across SDK versions. MSBuild reads the
+           registry natively in the target below and hands us the result. This task is pure file IO. -->
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        const string Exe = "aoa.exe";
+        const string Leaf = "Ascent of Ashes";
+        string found = "";
+
+        var roots = new List<string>();
+
+        // 1 + 2: explicit override, either form — always wins.
+        string hint = Hint;
+        if (string.IsNullOrEmpty(hint)) hint = Environment.GetEnvironmentVariable("ASHFORGE_GAME_DIR");
+        if (!string.IsNullOrEmpty(hint)) roots.Add(hint);
+
+        // 3: Steam. SteamPath is the primary library; libraryfolders.vdf lists every other one the
+        //    user has added (second drive, external, moved install). Skipping the vdf is the single
+        //    most common reason a tool "just can't find the game" for a stranger.
+        if (!string.IsNullOrEmpty(SteamPath))
+        {
+            string steam = SteamPath.Replace('/', '\\').Trim();
+            roots.Add(Path.Combine(steam, "steamapps", "common", Leaf));
+            try
+            {
+                string vdf = Path.Combine(steam, "steamapps", "libraryfolders.vdf");
+                if (File.Exists(vdf))
+                    foreach (Match m in Regex.Matches(File.ReadAllText(vdf), "\"path\"\\s*\"([^\"]+)\""))
+                        roots.Add(Path.Combine(m.Groups[1].Value.Replace("\\\\", "\\"), "steamapps", "common", Leaf));
+            }
+            catch { /* unreadable vdf is not fatal — keep probing the rest */ }
+        }
+
+        // 4: the usual suspects.
+        foreach (string b in new[] { @"C:\Program Files (x86)\Steam", @"C:\Program Files\Steam", @"D:\Steam" })
+            roots.Add(Path.Combine(b, "steamapps", "common", Leaf));
+
+        foreach (string r in roots)
+        {
+            try
+            {
+                if (found.Length == 0 && !string.IsNullOrEmpty(r) && File.Exists(Path.Combine(r, Exe)))
+                    found = Path.GetFullPath(r);
+            }
+            catch { /* a malformed path in the vdf must not fail the build */ }
+        }
+
+        GameDir = found;
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="AshForgeResolveGame" BeforeTargets="ResolveAssemblyReferences;BeforeBuild">
+    <!-- MSBuild reads this natively; a missing key yields empty rather than failing. -->
+    <PropertyGroup>
+      <_AshForgeSteamPath>$([MSBuild]::GetRegistryValueFromView('HKEY_CURRENT_USER\Software\Valve\Steam', 'SteamPath', null, RegistryView.Registry64, RegistryView.Registry32))</_AshForgeSteamPath>
+    </PropertyGroup>
+
+    <AshForgeLocateGame Hint="$(AshForgeGameDir)" SteamPath="$(_AshForgeSteamPath)">
+      <Output TaskParameter="GameDir" PropertyName="AshForgeGameDir" />
+    </AshForgeLocateGame>
+
+    <PropertyGroup>
+      <AshForgeGameData>$(AshForgeGameDir)\data_Ascent of Ashes_windows_x86_64</AshForgeGameData>
+      <!-- Where a built mod goes. Override AshForgeModsDir if you keep your mods elsewhere. -->
+      <AshForgeModsDir Condition="'$(AshForgeModsDir)' == ''">$(USERPROFILE)\AshForgeModLoader\mods</AshForgeModsDir>
+      <AshForgeModId Condition="'$(AshForgeModId)' == ''">$(AssemblyName)</AshForgeModId>
+    </PropertyGroup>
+
+    <Error Condition="'$(AshForgeGameDir)' == ''"
+           Text="Couldn't find your Ascent of Ashes install. Set &lt;AshForgeGameDir&gt; in your .csproj, or the ASHFORGE_GAME_DIR environment variable, to the folder containing aoa.exe." />
+    <Error Condition="!Exists('$(AshForgeGameData)')"
+           Text="Found '$(AshForgeGameDir)' but it has no data_Ascent of Ashes_windows_x86_64 folder — that isn't an Ascent of Ashes install, or the game has changed layout." />
+    <Error Condition="!Exists('$(AshForgeSdkLib)AshLoader.dll')"
+           Text="AshLoader.dll is missing from '$(AshForgeSdkLib)'. This SDK is incomplete — re-download it." />
+
+    <Message Importance="high" Text="AshForge SDK: game at $(AshForgeGameDir)" />
+
+    <!-- Reference-only, every one of them. These assemblies already exist at runtime: the game ships
+         its own, and the loader is deployed next to it. Copying them beside your mod would put a
+         SECOND copy of the game's types in the process — Harmony would then patch a dead copy and
+         your patches would silently do nothing. -->
+    <ItemGroup>
+      <ReferencePath Include="$(AshForgeSdkLib)AshLoader.dll">
+        <Private>false</Private>
+      </ReferencePath>
+      <ReferencePath Include="$(AshForgeGameData)\Ascent of Ashes.dll">
+        <Private>false</Private>
+      </ReferencePath>
+      <ReferencePath Include="$(AshForgeGameData)\GodotSharp.dll">
+        <Private>false</Private>
+      </ReferencePath>
+      <ReferencePath Include="$(AshForgeGameData)\0Harmony.dll">
+        <Private>false</Private>
+      </ReferencePath>
+      <!-- dec is the game's data/definition library; you only need it if you declare Dec types. -->
+      <ReferencePath Condition="Exists('$(AshForgeGameData)\dec.dll')" Include="$(AshForgeGameData)\dec.dll">
+        <Private>false</Private>
+      </ReferencePath>
+    </ItemGroup>
+  </Target>
+
+  <!-- ── Deploy ──────────────────────────────────────────────────────────────────────────────────
+       After a successful build, lay the mod out the way the loader expects:
+           mods/<id>/mod.json
+           mods/<id>/Assemblies/<you>.dll
+           mods/<id>/Decs/...            (copied if you have a Decs folder)
+       Turn it off with -p:AshForgeDeploy=false if you'd rather copy by hand. -->
+  <PropertyGroup>
+    <AshForgeDeploy Condition="'$(AshForgeDeploy)' == ''">true</AshForgeDeploy>
+  </PropertyGroup>
+
+  <Target Name="AshForgeDeployMod" AfterTargets="Build" Condition="'$(AshForgeDeploy)' == 'true'">
+    <PropertyGroup>
+      <_AshForgeOut>$(AshForgeModsDir)\$(AshForgeModId)</_AshForgeOut>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(_AshForgeOut)\Assemblies" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(_AshForgeOut)\Assemblies" />
+    <Copy Condition="Exists('$(MSBuildProjectDirectory)\mod.json')"
+          SourceFiles="$(MSBuildProjectDirectory)\mod.json" DestinationFolder="$(_AshForgeOut)" />
+
+    <ItemGroup>
+      <_AshForgeDecs Include="$(MSBuildProjectDirectory)\Decs\**\*" />
+    </ItemGroup>
+    <Copy Condition="'@(_AshForgeDecs)' != ''"
+          SourceFiles="@(_AshForgeDecs)"
+          DestinationFiles="@(_AshForgeDecs->'$(_AshForgeOut)\Decs\%(RecursiveDir)%(Filename)%(Extension)')" />
+
+    <Message Importance="high" Text="AshForge SDK: deployed to $(_AshForgeOut)" />
+    <Warning Condition="!Exists('$(MSBuildProjectDirectory)\mod.json')"
+             Text="No mod.json next to your .csproj — the loader will fall back to the folder name for your mod's id and will not read your load order or capabilities." />
+  </Target>
+
+</Project>

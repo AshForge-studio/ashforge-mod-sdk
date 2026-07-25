@@ -1,0 +1,9 @@
+{
+  "id": "yourname.myfirstmod",
+  "name": "My First Mod",
+  "version": "0.1.0",
+  "author": "Your Name",
+  "description": "A starting point. Says hello in the log and adds one setting.",
+  "loadOrder": 100,
+  "enabled": true
+}

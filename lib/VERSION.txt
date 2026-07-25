@@ -1,0 +1,14 @@
+AshLoader.dll shipped with this SDK
+-----------------------------------
+Loader commit : 5880219
+Hub release   : 1.0.20 (Windows)
+Unsigned bytes: 148992
+sha256        : 3482eb1482b294d8b1b6f40019368b55a05a7348de36cbd9d7d6c233a5ffe6aa
+
+This is a REFERENCE assembly. You compile against it; you never ship it. The real loader is
+deployed next to the game by the AshForge Hub, and that is the copy your mod runs against.
+
+The version above is the OLDEST loader that has every API this SDK documents. A player on an
+older Hub will not have all of it — see docs/04-rules-that-bite.md, "Never assume the player's
+loader is as new as yours". That section is not optional reading; getting it wrong stops your
+mod loading entirely rather than degrading it.

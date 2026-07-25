@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Everything the SDK does for you lives in here: finding the game, referencing the loader and the
+       game's assemblies, and deploying the built mod into your mods folder. Keep this import first. -->
+  <Import Project="..\..\build\AshForge.Mod.props" />
+
+  <PropertyGroup>
+    <AssemblyName>MyFirstMod</AssemblyName>
+    <RootNamespace>MyFirstMod</RootNamespace>
+
+    <!-- The game is .NET 6 and your mod is loaded into its process. Don't change this. -->
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <!-- Uncomment if the SDK can't find your install (point at the folder containing aoa.exe):
+    <AshForgeGameDir>D:\Games\Ascent of Ashes</AshForgeGameDir>
+    -->
+
+    <!-- Uncomment if your mods folder isn't the default:
+    <AshForgeModsDir>D:\wherever\mods</AshForgeModsDir>
+    -->
+  </PropertyGroup>
+
+</Project>

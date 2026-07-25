@@ -1,0 +1,66 @@
+MIT License
+
+Copyright (c) 2026 The AshForge Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+SCOPE — WHAT THIS LICENSE COVERS
+
+The MIT license above applies to the contents of this repository EXCEPT the
+files listed under EXCLUSIONS below. In particular it covers:
+
+    build/      the MSBuild props
+    template/   the starter mod
+    docs/       the documentation
+    README.md
+
+You may copy the template into your own project, modify it, and ship the
+result commercially or otherwise, with no obligation beyond retaining the
+notice above. That is the intent: the template exists to be copied.
+
+--------------------------------------------------------------------------------
+EXCLUSIONS
+
+    lib/AshLoader.dll
+
+The AshForge Mod Loader is not open source and is NOT covered by the MIT
+license above. It is included here solely as a REFERENCE ASSEMBLY, so that
+mods can be compiled against its public API.
+
+You may:
+  - reference it when building a mod
+  - redistribute this SDK unmodified
+
+You may not:
+  - redistribute AshLoader.dll on its own or as part of another product
+  - ship it alongside your mod (it is deployed with the game by the AshForge
+    Hub; a second copy will not work — see docs/04-rules-that-bite.md)
+  - decompile, modify, or reverse engineer it, except as permitted by
+    applicable law
+
+All rights in the AshForge Mod Loader are reserved by The AshForge Team.
+
+--------------------------------------------------------------------------------
+NOT COVERED AT ALL
+
+Ascent of Ashes, its assemblies, and its assets belong to their respective
+owners. This SDK is an independent, unofficial modding toolkit; it is not
+affiliated with or endorsed by the game's developers. Nothing here grants any
+right to redistribute the game or any part of it.
