@@ -44,20 +44,34 @@ Use a namespaced form — `yourname.modname` — so you can't collide with someo
 
 ---
 
-## `saveCritical` — declared, but not yet enforced
+## `saveCritical` and `saveWarning` — protecting your players' saves
 
-You'll see `"saveCritical": true` in some AshForge manifests. It's intended to mean *"removing this mod
-may break existing saves"* — true when a mod defines decs, work categories or damage types that get baked
-into saves by name.
+```json
+{
+  "saveCritical": true,
+  "saveWarning": "Colonists' job priorities reference this mod's work categories. Disabling it leaves them pointing at work types that no longer exist."
+}
+```
 
-**Be aware: nothing currently reads this field.** Not the loader, not the Hub, not the website. Setting
-it today documents your intent and nothing more; it does not produce a warning for players.
+Set `saveCritical` when turning your mod off can damage an existing save — which is true whenever your
+mod defines **decs, work categories or damage types** that get written into saves **by name**. See
+[Rules that bite](04-rules-that-bite.md#-your-mods-data-can-make-a-save-unloadable).
 
-Set it anyway if it applies to you — it costs nothing, it's honest, and it will start meaning something.
-But do not rely on it to protect anyone. If removing your mod can break a save, **say so in your
-description**, where a player will actually see it.
+**This is enforced, and it matters more than it looks.** The Hub has no separate uninstall button —
+**disabling a mod *is* the uninstall path, and it's one click.** So when a player unticks a `saveCritical`
+mod that was enabled, the Hub stops them with a full modal: *"Disabling this mod will break your save and
+may result in permanent data loss. This action cannot be safely reversed."*
 
-See [Rules that bite → your mod's data can make a save unloadable](04-rules-that-bite.md#-your-mods-data-can-make-a-save-unloadable).
+It covers the routes that never touch your checkbox too — **Disable all**, and importing a saved load
+order both hit the same gate. Consent is remembered per mod so a player isn't nagged twice, and it's
+**withdrawn if they turn your mod back on**.
+
+`saveWarning` is optional and is **your own words for why**, shown in that dialog in place of the generic
+line. Use it. "This mod stores data inside your saved games" is true but tells a player nothing; naming
+what actually breaks lets them make a real decision.
+
+Costs you one line, and it's the difference between a player losing a colony and a player being warned.
+Say it in your `description` as well — that's what they read *before* installing.
 
 ---
 
