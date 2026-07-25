@@ -93,6 +93,19 @@ Full detail on both, and on what review involves:
 Whichever you use, **Depot can package and submit but can never sign** — the signing key never ships
 inside any tool.
 
+### Send your source with it
+
+**Source is strongly preferred over a binary.** Depot's submission carries your packaged `.mod.zip`, so
+add a link to your source repository alongside it — or attach the source if it isn't public.
+
+This is not bureaucracy, it's turnaround time. Reviewing a mod means understanding what its code can
+reach. With source that's an evening's read. Without it, it's decompiling your assembly and inferring
+intent from IL, which takes a week and produces more questions for you to answer. A submission with
+source gets looked at first and comes back faster.
+
+If you can't share source, say why in the submission — it isn't an automatic refusal, but expect the
+review to take considerably longer and to involve more back-and-forth.
+
 ---
 
 ## Updating
