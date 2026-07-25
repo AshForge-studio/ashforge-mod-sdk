@@ -87,8 +87,12 @@ Read them in this order if you're new:
 6. **[Talking to other mods](docs/06-capabilities.md)** — the world-state broker.
 7. **[Testing and debugging](docs/07-testing-and-debugging.md)** — running unsigned, logs, common failures.
 8. **[Publishing](docs/08-publishing.md)** — signing, submission, what we check.
+9. **[Changing existing content](docs/09-changing-existing-content.md)** — data-only mods (no C# at all), and how to override a dec the game already defines.
 
 If you only read one page after the walkthrough, make it **Rules that bite**.
+
+Writing a translation, a name list, or a rebalance? You may not need C# at all — start at
+**[Changing existing content](docs/09-changing-existing-content.md)**.
 
 ---
 

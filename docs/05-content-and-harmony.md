@@ -51,6 +51,10 @@ behaves correctly in situations we never thought about.
 
 **A content-only mod needs no DLL at all.** `mod.json` plus `Decs/` is a complete mod.
 
+**Changing content the game already has** — overriding, patching or translating an existing dec —
+needs one extra attribute, and redeclaring the dec without it silently collides instead of
+overriding. See [Changing existing content](09-changing-existing-content.md).
+
 ### Custom dec types in C#
 
 If you declare your own `Dec` subclass, remember that its `PostLoad` **may run several times in one
