@@ -1,8 +1,8 @@
 # Publishing
 
-> **Status: the submission pipeline is being built.** Signing and distribution work today, but the
-> automated audit and a self-serve submission route don't exist yet. Until they do, submission is a
-> conversation with us — see *Submitting* below. This page will get more specific, not less.
+> **Status: submitting works today** — package in Depot, send it through the submission form, we review
+> and sign. What doesn't exist yet is the *automated* audit; review is done by a person, so expect it to
+> take as long as reading code takes.
 
 ---
 
@@ -77,11 +77,21 @@ Two things we will never claim, and you shouldn't either:
 
 ## Submitting
 
-Open an issue at [AshForge-studio/feedback](https://github.com/AshForge-studio/feedback/issues) with a
-link to your source and a short description of what it does and what it patches.
+Packaging and publishing go through **Depot**, one of the suite tools in the Hub — whether you built the
+mod with this SDK or with the content tools. It has two targets:
 
-Source is strongly preferred over a binary — it's the difference between a review that takes an evening
-and one that takes a week.
+- **Local** — writes the package to a folder and stops there. Nothing is sent to us, nothing is reviewed,
+  and it isn't signed. For keeping it yourself, sharing it directly, or running it in a third-party
+  loader. The official Hub won't load it unsigned, which is the point.
+- **Submit for review** — builds the `.mod.zip` and opens the submission form with your mod's details
+  filled in. Attach the package, send it, and we review, sign and publish it to the library. A GitHub
+  account is all you need.
+
+Full detail on both, and on what review involves:
+**[ashforge.dev/submit](https://ashforge.dev/submit)**.
+
+Whichever you use, **Depot can package and submit but can never sign** — the signing key never ships
+inside any tool.
 
 ---
 
