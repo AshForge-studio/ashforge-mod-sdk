@@ -84,6 +84,19 @@ The manifest declaration is advisory metadata for the Hub's "better with" graph.
 code is what actually takes effect.** Keep them in step; a mismatch isn't an error today but it makes
 your mod's page lie.
 
+The loader reconciles the two at startup and logs `REGISTERED-NOT-DECLARED` when you register something
+your manifest doesn't mention. On loaders before 1.0.22 that check misfired for **every** third-party
+capability — the id string couldn't be matched back to the id your code registered, so a correct manifest
+was reported as missing. If you're chasing that warning on an older loader, it isn't your manifest.
+
+Two things worth knowing when you write the id:
+
+- Your own contracts must live under **`author.mod.*`** — the bare `ashforge.*` namespace is reserved for
+  first-party contract *definition* and a mod registering there is refused. Providing or consuming an
+  `ashforge.*` capability is always fine; only defining one is reserved.
+- The id in the manifest is matched by its **full canonical name**, `namespace.name@version`. Write it
+  exactly as your code constructs it.
+
 When your underlying data changes:
 
 ```csharp

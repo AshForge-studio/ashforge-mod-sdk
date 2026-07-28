@@ -87,6 +87,29 @@ The practical consequence for you: **never put a security decision in `mod.json`
 player (or anything else) can edit. Read your id and version from it for convenience; don't trust it for
 anything that matters.
 
+### Your identity is sealed when you sign (loader 1.0.22+)
+
+There was a gap in the arrangement above. The loader read your **id**, your **display name** and your
+**capability declaration** out of `mod.json` — the one file the signature doesn't cover — so on a signed
+mod those were all still editable *after* signing. The name shown to players in the unverified-mods
+warning is one of them, which meant an attacker-editable string was being presented inside a trusted
+frame.
+
+Signing now copies those values into `ashforge.manifest.json`, which **is** covered by the signature. The
+loader reads them back only once your bytes are proven authentic, intact and un-revoked, and where the
+signed manifest and `mod.json` disagree, **the signed value wins** and the swap is named in the log.
+
+What this means in practice:
+
+- **Nothing to do.** Signing handles it; a manifest without these fields behaves exactly as before, so
+  older signed mods keep working unchanged.
+- **A mismatch is a warning, not a rejection.** The Mod Manager legitimately rewrites `mod.json`, so
+  refusing to load on a disagreement would break the game for a player who did nothing wrong.
+- **Re-sign to get it.** The sealed identity only appears once a mod is signed again — an existing signed
+  mod gains nothing until then.
+- Your **capability declaration** is read from the signed manifest too, so it is a baseline an audit can
+  actually trust rather than one anybody can edit.
+
 ---
 
 ## Folder layout

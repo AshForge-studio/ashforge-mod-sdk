@@ -1,14 +1,31 @@
 AshLoader.dll shipped with this SDK
 -----------------------------------
-Loader commit : 5880219
-Hub release   : 1.0.20 (Windows)
-Unsigned bytes: 148992
-sha256        : 3482eb1482b294d8b1b6f40019368b55a05a7348de36cbd9d7d6c233a5ffe6aa
+Loader commit : 191522e
+Hub release   : 1.0.22 (Windows)
+Unsigned bytes: 163840
+sha256        : 81b9c0b15256a3ce1ac3bfc8efe104899cddc168315b18985c1e816e612373a6
 
 This is a REFERENCE assembly. You compile against it; you never ship it. The real loader is
 deployed next to the game by the AshForge Hub, and that is the copy your mod runs against.
 
-The version above is the OLDEST loader that has every API this SDK documents. A player on an
-older Hub will not have all of it — see docs/04-rules-that-bite.md, "Never assume the player's
-loader is as new as yours". That section is not optional reading; getting it wrong stops your
-mod loading entirely rather than degrading it.
+MINIMUM LOADER FOR THE DOCUMENTED API: 5880219 (Hub 1.0.20)
+
+Those are two different numbers, deliberately. The assembly above is the CURRENT shipped loader,
+so you compile against exactly what players run. The minimum is the oldest loader that still has
+every API these docs describe — 1.0.22 added no new mod-facing API, so a mod using only what is
+documented here runs on any loader from 1.0.20 onward.
+
+Compiling successfully therefore does NOT prove your mod loads on a player's install: this
+assembly can carry APIs that older loaders lack, and the compiler cannot warn you. See
+docs/04-rules-that-bite.md, "Never assume the player's loader is as new as yours". That section
+is not optional reading; getting it wrong stops your mod loading entirely rather than degrading
+it.
+
+What changed in this build that affects you
+-------------------------------------------
+- A capability you declare in mod.json now actually matches the provider you register in code.
+  Third-party ids (yours are "author.mod.*") previously failed that comparison, so every
+  third-party provider was reported as undeclared however correct the manifest was. If you saw
+  REGISTERED-NOT-DECLARED in the loader log for a declaration you knew was right, that was this.
+- Once your mod is signed, its id, display name and capability declaration are read from inside
+  the signed envelope rather than from mod.json. See docs/02-mod-json.md.
