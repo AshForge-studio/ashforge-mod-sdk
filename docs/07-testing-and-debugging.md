@@ -103,7 +103,7 @@ letting it degrade someone's colony.
 - **A fresh colony *and* a loaded save.** `Existed == false` on first run is a different path.
 - **Save, quit, reload.** Then check your state actually came back.
 - **With your mod removed from a save that used it.** If that breaks the save, set `saveCritical` so the
-  Hub warns players before they disable you — see
+  Hub warns players before they disable your mod — see
   [mod.json → saveCritical](02-mod-json.md#savecritical-and-savewarning--protecting-your-players-saves).
 - **Alongside other mods.** Load-order conflicts only show up in company.
 

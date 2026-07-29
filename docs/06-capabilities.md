@@ -91,9 +91,13 @@ was reported as missing. If you're chasing that warning on an older loader, it i
 
 Two things worth knowing when you write the id:
 
-- Your own contracts must live under **`author.mod.*`** — the bare `ashforge.*` namespace is reserved for
+- Your own contracts must live under **`author.mod.*`** — the `ashforge.*` **family** is reserved for
   first-party contract *definition* and a mod registering there is refused. Providing or consuming an
   `ashforge.*` capability is always fine; only defining one is reserved.
+  ★ As of loader `59a8b6a` (Hub 1.0.24) the check compares the **joined family name**, not the namespace
+  alone. A namespace like `ashforge.something` is now refused where it previously slipped through, because
+  `ashforge.colony` + `net_worth` and `ashforge` + `colony.net_worth` are the same family. A correctly
+  namespaced mod sees no difference.
 - The id in the manifest is matched by its **full canonical name**, `namespace.name@version`. Write it
   exactly as your code constructs it.
 
@@ -126,8 +130,9 @@ If you want *other* mods to be able to ask *you* something, define the contract:
 ctx.RegisterCapability(new CapabilityDefinition<MyThing>( ... ));
 ```
 
-**The `ashforge.*` namespace is reserved** for first-party contracts and the loader will reject a
-third-party definition that uses it. Yours must be `author.mod.*` — the same shape as your mod id:
+**The `ashforge.*` family is reserved** for first-party contracts and the loader will reject a
+third-party definition that uses it — including a deeper namespace such as `ashforge.something`, since
+that lands in the same family. Yours must be `author.mod.*` — the same shape as your mod id:
 
 ```
 yourname.coolmod.some_thing@1

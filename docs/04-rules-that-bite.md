@@ -90,7 +90,7 @@ the player's loader doesn't have, .NET does not give you a graceful failure:
 - a **type** the loader lacks throws `TypeLoadException` **the instant your class is touched**
 - a **method** it lacks throws `MissingMethodException`
 
-The loader catches it, attributes the fault to you, and disables your mod. From the player's side your
+The loader catches it, attributes the fault to your mod, and disables it. From the player's side your
 mod simply doesn't work, and the reason is buried in a log.
 
 The trap is that a *field's type* counts. This class fails to load entirely on an older loader:
@@ -170,7 +170,7 @@ ctx.RegisterSaveData(currentVersion: 2,
 ```
 
 `Existed == false` means "no prior data" and is **not** an error — it's a new colony, or a player who
-just installed you. Reset cleanly instead of throwing.
+just installed your mod. Reset cleanly instead of throwing.
 
 ---
 

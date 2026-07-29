@@ -46,7 +46,7 @@ different target framework will not load.
 ```
 
 **Change the `id` to something of your own** before you build anything real. It keys your settings and
-your save data, and changing it later silently wipes both for anyone who installed you.
+your save data, and changing it later silently wipes both for anyone who installed your mod.
 
 Full field reference: [mod.json](02-mod-json.md).
 

@@ -71,7 +71,7 @@ frames so twenty mods don't all wake up on the same one.
 ### Settings
 
 Declared once at init, drawn for the player under **ESC ▸ Mod Settings**, stored in their own config file
-— never in the save, so preferences follow a player across colonies and uninstalling you can't corrupt
+— never in the save, so preferences follow a player across colonies and uninstalling your mod can't corrupt
 anything.
 
 ```csharp

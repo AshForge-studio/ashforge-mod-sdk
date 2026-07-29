@@ -1,6 +1,6 @@
 # mod.json
 
-Every mod folder has one, next to your `Assemblies/` folder. It's how the loader knows who you are.
+Every mod folder has one, next to your `Assemblies/` folder. It's how the loader knows what your mod is.
 
 ```json
 {
@@ -25,7 +25,7 @@ That's a complete, valid manifest. Everything beyond it is optional.
 | `id` | string | **Your identity.** Used for settings storage, save data, fault attribution, dev-command grouping, and capability ownership. If absent, the loader falls back to the **folder name**. |
 | `name` | string | Display name, shown in the Mod Manager and the Mod Settings screen. Falls back to the folder name. |
 | `loadOrder` | int | Lower loads first. Default `100`. Also the tiebreaker when two mods provide the same capability at equal priority. |
-| `enabled` | bool | `false` means the loader skips you entirely. The Hub's Mod Manager and the Dev Launcher both write this field. |
+| `enabled` | bool | `false` means the loader skips your mod entirely. The Hub's Mod Manager and the Dev Launcher both write this field. |
 | `capabilities` | object | Declares what you provide and consume. See [Talking to other mods](06-capabilities.md). |
 
 **Pick your `id` carefully and never change it.** It keys the player's settings and your save data. Renaming it silently resets both — the player's configuration is simply gone, with no error.
@@ -40,7 +40,7 @@ Use a namespaced form — `yourname.modname` — so you can't collide with someo
 |---|---|
 | `version` | Nothing enforces this. The Hub compares it against the catalogue to show "Update available", so keep it accurate and use semver. |
 | `author` | Displayed. |
-| `description` | Displayed. Write it for a player deciding whether to install you, not for another developer. |
+| `description` | Displayed. Write it for a player deciding whether to install your mod, not for another developer. |
 
 ---
 

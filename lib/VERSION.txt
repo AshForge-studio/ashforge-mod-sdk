@@ -1,9 +1,9 @@
 AshLoader.dll shipped with this SDK
 -----------------------------------
-Loader commit : 191522e
-Hub release   : 1.0.22 (Windows)
-Unsigned bytes: 163840
-sha256        : 81b9c0b15256a3ce1ac3bfc8efe104899cddc168315b18985c1e816e612373a6
+Loader commit : 59a8b6a
+Hub release   : 1.0.24 (Windows)
+Unsigned bytes: 164864
+sha256        : e80623d9c7479fbc98a88a916533e36fb9faac7c81bc7815dca7a4defb2d8db8
 
 This is a REFERENCE assembly. You compile against it; you never ship it. The real loader is
 deployed next to the game by the AshForge Hub, and that is the copy your mod runs against.
@@ -12,8 +12,8 @@ MINIMUM LOADER FOR THE DOCUMENTED API: 5880219 (Hub 1.0.20)
 
 Those are two different numbers, deliberately. The assembly above is the CURRENT shipped loader,
 so you compile against exactly what players run. The minimum is the oldest loader that still has
-every API these docs describe — 1.0.22 added no new mod-facing API, so a mod using only what is
-documented here runs on any loader from 1.0.20 onward.
+every API these docs describe — neither 1.0.23 nor 1.0.24 adds any mod-facing API, so a mod using
+only what is documented here still runs on any loader from 1.0.20 onward.
 
 Compiling successfully therefore does NOT prove your mod loads on a player's install: this
 assembly can carry APIs that older loaders lack, and the compiler cannot warn you. See
@@ -21,10 +21,23 @@ docs/04-rules-that-bite.md, "Never assume the player's loader is as new as yours
 is not optional reading; getting it wrong stops your mod loading entirely rather than degrading
 it.
 
-What changed in this build that affects you
--------------------------------------------
-- A capability you declare in mod.json now actually matches the provider you register in code.
-  Third-party ids (yours are "author.mod.*") previously failed that comparison, so every
+What changed in this build that affects your mod
+------------------------------------------------
+- The `ashforge.*` capability FAMILY is now reserved for first-party contracts, and the check is
+  stricter than before: it compares the joined family name rather than the namespace alone, so a
+  definition using a namespace like "ashforge.something" is now refused where it previously
+  slipped through. A correctly-namespaced mod is unaffected — your contracts live under
+  "author.mod.*". This closes a hole where a mod could publish a HIGHER version of a first-party
+  contract and capture every consumer that asked for an open version range.
+  Note what is restricted: DEFINING a contract in that family. Providing and consuming an
+  ashforge.* capability are unchanged and still entirely supported.
+- Nothing else here changes an API your mod calls. 1.0.23 was a Hub-side fix to in-Hub mod
+  updating and carries no loader change at all.
+
+Earlier, still worth knowing
+----------------------------
+- A capability your mod declares in mod.json now actually matches the provider it registers in
+  code. Third-party ids (yours are "author.mod.*") previously failed that comparison, so every
   third-party provider was reported as undeclared however correct the manifest was. If you saw
   REGISTERED-NOT-DECLARED in the loader log for a declaration you knew was right, that was this.
 - Once your mod is signed, its id, display name and capability declaration are read from inside
