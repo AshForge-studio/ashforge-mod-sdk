@@ -1,0 +1,129 @@
+{
+  "_comment": [
+    "Structured source of truth for loader/Hub compatibility. The human-readable table in",
+    "docs/10-loader-compatibility.md is GENERATED from this file by tools/gen_loader_compat.py.",
+    "Do not hand-edit the markdown; edit this and regenerate, or the two will disagree.",
+    "",
+    "PROVENANCE — every row here was derived, not remembered:",
+    "  hub/date/loader  = the 'shipped/hub-*' tag in the AshForgeHub repo. Each tag's subject",
+    "                     names the loader commit it bundles, e.g. 'Windows Hub 1.0.24",
+    "                     (published). Bundles loader 59a8b6a.'",
+    "  api_types        = count of public types under src/AshLoader at that loader commit,",
+    "                     in the AshForgeModLoader repo.",
+    "  mod_facing       = read from the loader commit range between releases; empty means the",
+    "                     release carries no change a mod author can observe."
+  ],
+
+  "generated_from": "AshForgeHub shipped/hub-* tags + AshForgeModLoader src/AshLoader",
+  "derived_on": "2026-08-18",
+
+  "sdk_reference_assembly": {
+    "loader": "59a8b6a",
+    "hub": "1.0.24",
+    "note": "lib/AshLoader.dll in this SDK is built from this commit."
+  },
+
+  "minimum_documented_api": {
+    "loader": "5880219",
+    "hub": "1.0.20",
+    "note": "Oldest loader that has every API these docs describe."
+  },
+
+  "lanes": {
+    "stable": { "latest": "1.0.28", "status": "Retired 2026-08-03, superseded by the beta lane." },
+    "beta": { "latest": "1.0.29-beta.1", "status": "Live." }
+  },
+
+  "releases": [
+    {
+      "hub": "1.0.20", "lane": "stable", "date": "2026-07-25", "loader": "5880219",
+      "api_types": null,
+      "mod_facing": ["Minimum loader for the documented API."]
+    },
+    {
+      "hub": "1.0.21", "lane": "stable", "date": "2026-07-26", "loader": "8aaba75",
+      "api_types": null,
+      "mod_facing": []
+    },
+    {
+      "hub": "1.0.22", "lane": "stable", "date": "2026-07-27", "loader": "191522e",
+      "api_types": null,
+      "mod_facing": [
+        "Once a mod is signed, its id, display name and capability declaration are read from inside the signed envelope rather than from mod.json.",
+        "A capability declared in mod.json now matches the provider registered in code. Before this, every third-party id failed that comparison and a correct manifest was still reported REGISTERED-NOT-DECLARED."
+      ]
+    },
+    {
+      "hub": "1.0.23", "lane": "stable", "date": "2026-07-28", "loader": "191522e",
+      "api_types": null,
+      "mod_facing": [],
+      "note": "Hub-side fix to in-Hub mod updating. Same loader commit as 1.0.22, so no loader change at all."
+    },
+    {
+      "hub": "1.0.24", "lane": "stable", "date": "2026-07-28", "loader": "59a8b6a",
+      "api_types": 66,
+      "mod_facing": [
+        "The reserved ashforge.* capability FAMILY check is stricter: it compares the joined family name rather than the namespace alone, so DEFINING a contract under a namespace like ashforge.something is now refused. Providing and consuming ashforge.* capabilities are unchanged."
+      ],
+      "note": "This SDK's reference assembly is built from this commit."
+    },
+    {
+      "hub": "1.0.25", "lane": "linux-only", "date": "2026-07-28", "loader": null,
+      "api_types": null,
+      "mod_facing": [],
+      "note": "No Windows release carries this number. The Linux lane shares the version counter but ships independently, so Windows goes 1.0.24 to 1.0.26. Not a withdrawn release."
+    },
+    {
+      "hub": "1.0.26", "lane": "stable", "date": "2026-07-29", "loader": "b7f057c",
+      "api_types": 66,
+      "mod_facing": [],
+      "note": "The loader gained a version number of its own. No public API change from 59a8b6a."
+    },
+    {
+      "hub": "1.0.27", "lane": "stable", "date": "2026-07-29", "loader": "b7f057c",
+      "api_types": 66,
+      "mod_facing": []
+    },
+    {
+      "hub": "1.0.28", "lane": "stable", "date": "2026-07-30", "loader": "b7f057c",
+      "api_types": 66,
+      "mod_facing": [],
+      "note": "Last Windows release on the stable lane."
+    },
+    {
+      "hub": "1.0.29-beta.1", "lane": "beta", "date": "2026-08-03", "loader": "9391c30",
+      "api_types": 68,
+      "mod_facing": [
+        "Harmony is shipped under our own name and kept out of the Default load context. This is the fix for two 0Harmony copies being loaded at once, which broke patches applied by native-format mods.",
+        "ASHLOADER_NO_HARMONY_SERVE added — an environment switch that stops the loader serving its Harmony copy to anything else.",
+        "Mods built against a different game build are quarantined rather than loaded.",
+        "A mod's Decs are validated against the installed game build before injection.",
+        "AshForge mods are published into the game's own Mods dialog.",
+        "Signature coverage widened to what a mod actually ships, not only Assemblies/ and Decs/.",
+        "Two public types added: Binding, GameBindings. Nothing removed."
+      ],
+      "note": "Migrated to game build 24493575 (beta). This is the live lane."
+    }
+  ],
+
+  "compatibility_findings": [
+    {
+      "id": "additive-only",
+      "claim": "The mod-facing API has been additive-only across every shipped loader.",
+      "evidence": "Public surface of src/AshLoader compared at three commits - 59a8b6a (Hub 1.0.24, this SDK), b7f057c (Hub 1.0.26-1.0.28) and 9391c30 (Hub 1.0.29-beta.1). Types: 66, 66, 68. Public methods: 122, 122, 141. Public fields and properties: 191, 191, 220. NOTHING was removed at either step, and no method signature changed - a changed signature would appear as a removal, and there are none. The beta additions are the Binding and GameBindings types and their members. These are counts of DECLARATIONS IN SOURCE at each commit, compared by sorted signature rather than by total, so a remove-and-add pair cannot hide behind an unchanged count. Counting the compiled assemblies instead gives different absolute totals - a decompiler renders accessors and compiler-generated members differently - but the same result: comparing this SDK's shipped lib/AshLoader.dll against the beta Hub's bundled loader shows 2 types, 19 methods and 27 fields/properties ADDED and NOTHING removed.",
+      "consequence": "A mod using only the documented API and built against this SDK still compiles and loads on every shipped loader from 1.0.20 onward, including the beta lane. Caveat worth knowing: this compares declarations, so it proves nothing was removed or renamed. It cannot prove that a method kept doing the same thing - for behaviour changes, read the per-release notes above."
+    },
+    {
+      "id": "reference-assembly-is-behind",
+      "claim": "The SDK's reference assembly is older than any loader now in players' hands.",
+      "evidence": "lib/AshLoader.dll is built from 59a8b6a (Hub 1.0.24, 2026-07-28). The last stable loader is b7f057c (Hub 1.0.28, 2026-07-30) and the live beta loader is 9391c30 (Hub 1.0.29-beta.1, 2026-08-03).",
+      "consequence": "Because the API is additive-only, compiling against this assembly is still safe today - nothing it declares has been removed from any newer loader. What you cannot do is assume the reverse: the newer loaders carry behaviour this assembly knows nothing about. VERSION.txt used to claim you compile against exactly what players run; that claim has been corrected rather than left standing. Refreshing the assembly itself is a separate decision."
+    },
+    {
+      "id": "beta-changes-undocumented",
+      "claim": "The beta lane carries mod-facing behaviour changes that no author-facing document describes.",
+      "evidence": "24 loader commits between b7f057c and 9391c30, including Harmony isolation, build-mismatch quarantine, dec validation before injection, and widened signature coverage.",
+      "consequence": "An author whose mod is quarantined for a game-build mismatch has nothing to read that explains it."
+    }
+  ]
+}
