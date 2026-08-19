@@ -5,15 +5,22 @@ Hub release   : 1.0.24 (Windows)
 Unsigned bytes: 164864
 sha256        : e80623d9c7479fbc98a88a916533e36fb9faac7c81bc7815dca7a4defb2d8db8
 
+AshLoader.xml sits beside it — the API documentation, built from the same commit. Your IDE reads
+it automatically, so hovering any loader type shows what it is for and what it costs you.
+
 This is a REFERENCE assembly. You compile against it; you never ship it. The real loader is
 deployed next to the game by the AshForge Hub, and that is the copy your mod runs against.
 
 MINIMUM LOADER FOR THE DOCUMENTED API: 5880219 (Hub 1.0.20)
 
-Those are two different numbers, deliberately. The assembly above is the CURRENT shipped loader,
-so you compile against exactly what players run. The minimum is the oldest loader that still has
+Those are two different numbers, deliberately. The minimum is the oldest loader that still has
 every API these docs describe — neither 1.0.23 nor 1.0.24 adds any mod-facing API, so a mod using
 only what is documented here still runs on any loader from 1.0.20 onward.
+
+  WARNING: the assembly above is NO LONGER the newest loader. Stable moved on to b7f057c
+  (Hub 1.0.26-1.0.28) and the live beta lane runs 9391c30 (Hub 1.0.29-beta.1). The mod-facing API
+  has been additive-only across every one of them - nothing has ever been removed - so compiling
+  against this assembly remains safe. Release-by-release detail: docs/10-loader-compatibility.md.
 
 Compiling successfully therefore does NOT prove your mod loads on a player's install: this
 assembly can carry APIs that older loaders lack, and the compiler cannot warn you. See

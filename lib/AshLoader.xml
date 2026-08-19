@@ -1,0 +1,2384 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>AshLoader</name>
+    </assembly>
+    <members>
+        <member name="T:AshForge.ModLoader.AppearanceRepair">
+             <summary>
+             Makes a save that our own dec-cache bug already corrupted LOADABLE again.
+            
+             <see cref="T:AshForge.ModLoader.DecCacheGuard"/> stops us writing any more of them. This repairs the ones already on disk.
+            
+             ── WHAT IS WRONG WITH THOSE SAVES ─────────────────────────────────────────────────────────────────────────
+             A pawn was handed a HairStyleDec from a discarded parse generation, so the writer refused it and wrote
+             "&lt;name&gt;_DELETED". On load, dec cannot resolve that name and — with no error, because a missing dec resolves
+             to an empty string and then to null — hands the pawn a NULL HairStyle. The first time the map tries to draw
+             that pawn, `RigController.UpdateAppearance` dereferences it, NREs, and `Map.Activate` never finishes: the map
+             stays inactive forever and the log fills with thousands of "tried to update an inactive map".
+            
+             ── THE REPAIR ─────────────────────────────────────────────────────────────────────────────────────────────
+             Give the pawn a real hairstyle before the renderer touches it. `AppearanceData` is a CLASS, so the pawn keeps
+             the repair: the next save writes a valid name and the save heals itself permanently.
+            
+             ★ This is deliberately a REPAIR, not a workaround: it does not paper over a live bug, because after
+             DecCacheGuard no correctly-loaded pawn can reach here with a null hairstyle. If this ever fires on a save
+             made AFTER the guard shipped, that is a real signal — so it says so, loudly, once.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.AppearanceRepair.RepairedCount">
+            <summary>How many pawns we had to repair this session (0 = every save we touched was healthy).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.AshLog">
+             <summary>
+             Dead-simple file logger. The loader runs before any game UI exists, so a log file on disk
+             is our only window into whether injection actually fired. Written next to AshLoader.dll and,
+             as a fallback, to %TEMP%. Never throws — logging must never take the game down.
+            
+             ★ <see cref="M:AshForge.ModLoader.AshLog.Init"/> TRUNCATES its target. Any OTHER process that references AshLoader.dll — notably the
+             <c>tools/BrokerTests</c> harness — therefore destroys the game's log the moment it writes a line. That
+             really happened: a test run ate a playtest session, and the surviving file was full of test fixtures.
+             Such a process MUST set <see cref="F:AshForge.ModLoader.AshLog.LogPathEnvVar"/> before touching any loader type.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.AshLog.LogPathEnvVar">
+            <summary>Redirects the log file. Set by out-of-game tools so they can't clobber a real session.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.AshLog.DefaultFileName">
+            <summary>The game's log, when no override is set.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.AshLog.RotatePrevious(System.String)">
+            <summary>
+            Keep a few previous runs alongside the live log: ashloader.log → .1 → .2 → .3 (oldest dropped).
+            Cheap, bounded, and it means the session that wrote a bad save is still readable after the session that
+            tripped over it. Never allowed to fail the launch.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Capabilities">
+            <summary>
+            The AshForge-owned catalog of capability IDENTITIES — the query-side twin of <see cref="T:AshForge.ModLoader.BusEvents"/>.
+            Constants (not bare strings) so a typo is a compile error. Only the loader / first-party mods DEFINE
+            contracts in the <c>ashforge.*</c> namespace; anyone may provide or consume them.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Capabilities.IsReservedFamily(System.String)">
+             <summary>
+             Does this capability FAMILY fall inside the reserved first-party space?
+            
+             ★★ TEST THE FAMILY, NEVER THE NAMESPACE — the namespace cannot carry this rule. The registry groups by
+             <see cref="P:AshForge.ModLoader.CapabilityId.Family"/> (the joined, case-folded <c>namespace.name</c>), and that is exactly
+             how the old namespace test was walked around: the first-party contract is ns <c>ashforge</c> + name
+             <c>colony.net_worth</c>, and a third party could register ns <c>ashforge.colony</c> + name
+             <c>net_worth</c> — a DIFFERENT namespace but the SAME family. It would then land in the same version
+             map as the real contract, and <c>TryQuery</c> resolves the highest version in range, so publishing
+             version 2 of a family it does not own would hand it every consumer with an open range.
+            
+             The two spellings are indistinguishable once joined, so only the joined form can gate them both. Same
+             lesson as the capability-id parse fix: the split is a guess, the family is the identity.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Capabilities.ColonyNetWorth">
+            <summary>Colony net worth — one authoritative number. Wealth &amp; Trade provides the tiered model;
+            Raiders keeps its own calc as a mid-priority provider (standalone parity). Exclusive.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Capabilities.FactionStanding">
+            <summary>Per-faction standing/reputation. Wealth &amp; Trade provides it. Exclusive.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Capabilities.RegionThreat">
+            <summary>Regional threat = baseline + raid pressure (Raiders) + camp proximity (World Map). Aggregate.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Capabilities.WorldLocations">
+            <summary>Discovered world locations + lifecycle. World Map provides it. Exclusive.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Capabilities.PrisonerRoster">
+            <summary>
+            ★ RESERVED for Chains of Ash (design-review addition). The captivity roster — who is held, and how
+            many — so a sibling mod (Wealth &amp; Trade caravans) can read "are there captives to sell?" without a
+            hard reference to Chains. This is one of the two contracts the Chains cross-mod showpieces force; the
+            other is the <c>CaptiveSale*</c> event pair (see <see cref="T:AshForge.ModLoader.BusEvents"/>). Interrogate→reveal-node
+            reuses the existing <see cref="F:AshForge.ModLoader.BusEvents.DestinationDiscovered"/> verbatim — no Chains-specific event.
+            Chains' internal break/recruit/carry state is deliberately NOT contracted: a contract earns its place
+            only when a SECOND mod must read it. Exclusive; default = empty roster until Chains provides.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ColonyNetWorth">
+            <summary>Payload for <see cref="F:AshForge.ModLoader.Capabilities.ColonyNetWorth"/>.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ColonyNetWorth.Total">
+            <summary>Total colony net worth in credits.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ColonyNetWorth.Tier">
+            <summary>Derived wealth tier (0 = poorest). Meaning owned by the provider (Wealth &amp; Trade).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.FactionStanding">
+            <summary>Payload for <see cref="F:AshForge.ModLoader.Capabilities.FactionStanding"/> — a per-faction standing map, neutral (0)
+            for any faction not listed.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.FactionStanding.Standing(System.String)">
+            <summary>Standing toward a faction (0 = neutral if unknown).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.RegionThreat">
+            <summary>Payload for <see cref="F:AshForge.ModLoader.Capabilities.RegionThreat"/> — a single normalized threat level, summed
+            across contributors (baseline + raid pressure + camp proximity).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RegionThreat.Level">
+            <summary>Normalized threat (0 = calm). Contributions are additive.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.WorldLocation">
+            <summary>One discovered location, as a plain carrier (no game types).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.WorldLocations">
+            <summary>Payload for <see cref="F:AshForge.ModLoader.Capabilities.WorldLocations"/> — the discovered-location set.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.PrisonerInfo">
+            <summary>One held captive, as a plain carrier. Reserved for Chains of Ash.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.PrisonerRoster">
+            <summary>Payload for <see cref="F:AshForge.ModLoader.Capabilities.PrisonerRoster"/> — held captives. Reserved for Chains.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.BrokerCatalog">
+             <summary>
+             Registers the official <c>ashforge.*</c> capability catalog with the broker, each with its loader
+             DEFAULT (the priority-0 floor). Called at startup BEFORE mod Init(), so a provider registered in a mod's
+             Init finds its contract already defined.
+            
+             ★ HONEST DEVIATION from LOADER-BROKER-001 §11: the spec's defaults (e.g. "cheap sum of tracked items")
+             assume the loader can read live game state, but the loader holds NO compile-time game reference (it
+             reflects). So each loader default here is a NEUTRAL/EMPTY value, and richer standalone behavior comes
+             from a mod registering its own provider — exactly the Raiders "keep your own calc as a priority-50
+             provider" pattern (WO-MIG-002), generalized. Flagged for the team: this is the right call given the
+             no-game-ref constraint, but it means "net worth with zero mods" is 0, not an estimate.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BrokerCatalog.DumpEnvVar">
+            <summary>Dev-only: set to 1 to have a playtest write the live resolution report into the loader log.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BrokerCatalog.InstallPlaytestDump">
+             <summary>
+             Dev instrument (opt-in via <see cref="F:AshForge.ModLoader.BrokerCatalog.DumpEnvVar"/>): periodically log the live resolution report so a
+             playtest can ASSERT ground truth from `%TEMP%\ashloader.log` instead of a human reading a panel and
+             reporting what they think they saw. Off by default; a shipped loader never sets the variable.
+            
+             ★ Safe during the observe-only baseline pass: <see cref="M:AshForge.ModLoader.ResolutionSnapshot.Capture(AshForge.ModLoader.WorldStateBroker)"/> is a pure read
+             (introspection + a provenance dictionary lookup, no Resolve/Invalidate), so it cannot observe a
+             capability into being resolved. A capability that nothing has queried keeps reporting "not yet queried",
+             which is exactly the Stage-A signal we want to see.
+            
+             Ticks only advance while a map is running, so the first dump lands after the save has loaded, not at the
+             main menu — which is when there is anything worth reporting.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BrokerCatalog.ContractsFileName">
+            <summary>The generated contract table's filename. Committed at the repo root of <c>src/AshLoader</c>.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BrokerCatalog.ExportContractsJson(AshForge.ModLoader.WorldStateBroker)">
+             <summary>
+             Serialize the OFFICIAL contract table straight off a broker that has had <see cref="M:AshForge.ModLoader.BrokerCatalog.Install"/> run on it:
+             capability name, version, mode, unit, payload type. This is the SINGLE SOURCE for every consumer that
+             would otherwise retype the catalog — today the `ashforge-auditor` BRK003 rule (a different repo) and the
+             Mod Kit stubs coverage test.
+            
+             ★ Why a generated FILE rather than reflecting out of <c>AshLoader.dll</c>: no assembly load, it works
+             offline and against foreign targets, and — the point — it is git-diffable. Adding a sixth capability
+             becomes a reviewable line in a diff instead of a silent loss of BRK003 coverage. The drift test in
+             <c>tools/BrokerTests</c> fails until the committed file is regenerated (<c>dotnet run -- --regen</c>).
+            
+             Deterministic: capabilities are emitted in ordinal name order, so a regen never churns the diff.
+             </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts">
+             <summary>
+             Typed contract stubs for every published <c>ashforge.*</c> capability (broker spec §10.2).
+            
+             WHY THIS EXISTS. Without it, a third-party author writes <c>ctx.Query&lt;ColonyNetWorth&gt;(new CapabilityId(
+             "ashforge", "colony.net_worth", 1))</c> — three facts (id, version, payload type) they have to get right from
+             documentation, with a runtime type-guard rejection as the only feedback. Each stub below binds those three
+             together in one place, so the compiler enforces what the broker would otherwise only reject at runtime. It is
+             the difference between guessing at a channel and programming against a documented API.
+            
+             ★ THE STUBS DELIBERATELY DO NOT REDECLARE THE PAYLOAD TYPES. They reference the loader's
+             (<see cref="T:AshForge.ModLoader.ColonyNetWorth"/> et al). A copied payload type would be a DIFFERENT CLR <c>Type</c> in the mod's
+             assembly, and the broker's runtime type guard compares against the contract's <c>PayloadType</c> — so every
+             query would fall back to the default and every provider registration would be rejected. Same reason the Mod Kit
+             ships these as a thin facade over <c>AshLoader.dll</c>, never as a standalone copy of the contracts.
+            
+             ★ Deriving a provider from <c>ProviderBase</c> makes BRK003 (declared version ≠ payload type) UNREPRESENTABLE:
+             the capability id is supplied by the base, and the payload type is fixed by the generic. You choose only a
+             priority (see the priority bands in HANDOFF_BROKER.md) and the pure read.
+            
+             Every stub is a pure convenience wrapper — the underlying <see cref="T:AshForge.ModLoader.WorldStateBroker"/> surface stays open for
+             anyone who needs it. Adding a capability to <see cref="T:AshForge.ModLoader.Capabilities"/> without adding a stub here is caught by
+             the "contract stub coverage" test in <c>tools/BrokerTests</c>.
+             </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.ColonyNetWorthContract">
+            <summary>Colony net worth in CREDITS (valued, not a quantity proxy). Exclusive. Loader default: 0.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Contracts.BrokerContracts.ColonyNetWorthContract.Query(AshForge.ModLoader.ModContext)">
+            <summary>Read the resolved value. Never fails: with no provider you get the loader default (Total 0).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Contracts.BrokerContracts.ColonyNetWorthContract.TryQueryValued(AshForge.ModLoader.ColonyNetWorth@)">
+            <summary>
+            ★ Provenance-gated read for the common "only meaningful if a REAL provider answered" case. Returns false
+            when the loader floor answered, so you can tell "nobody models wealth" from "wealth is genuinely 0".
+            This is the exact trap the Raiders migration hit: a quantity proxy and valued credits share a shape.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.ColonyNetWorthContract.ProviderBase">
+            <summary>Implement <see cref="M:AshForge.ModLoader.Contracts.BrokerContracts.ColonyNetWorthContract.ProviderBase.Provide(AshForge.ModLoader.IWorldStateContext)"/> as a PURE READ, then <c>ctx.RegisterProvider(new YourProvider())</c>.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.FactionStandingContract">
+            <summary>Per-faction standing / reputation. Exclusive. Loader default: empty.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.RegionThreatContract">
+            <summary>
+            Regional threat, normalized and ADDITIVE across contributors. Aggregate — every valid provider composes,
+            so influence comes from the contributed VALUE, not priority. Loader default: 0.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.RegionThreatContract.ContributorBase">
+            <summary>In aggregate mode this is a CONTRIBUTOR, not an owner — you add to the sum, you don't win it.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.WorldLocationsContract">
+            <summary>Discovered world locations + lifecycle. Exclusive. Loader default: empty list.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.PrisonerRosterContract">
+            <summary>
+            The captivity roster — who is held, and how many. Reserved for Chains of Ash, so a sibling mod (e.g. Wealth
+            &amp; Trade caravans) can ask "are there captives to sell?" without a hard reference to Chains.
+            Exclusive. Loader default: empty roster.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contracts.BrokerContracts.Priorities">
+            <summary>
+            The priority bands (convention, not enforced). A third party who intends to be authoritative over the
+            standard first-party provider registers above <see cref="F:AshForge.ModLoader.Contracts.BrokerContracts.Priorities.Standard"/>; overriding is safe and
+            non-destructive — the outranked provider stays in the chain as a dormant fallback.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contracts.BrokerContracts.Priorities.Floor">
+            <summary>The loader default floor. Not registerable by a mod.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contracts.BrokerContracts.Priorities.StandaloneFallback">
+            <summary>Your own calc, kept so you still work alone but yield to a richer provider.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contracts.BrokerContracts.Priorities.Standard">
+            <summary>"I am the primary source for this fact." The first-party default.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contracts.BrokerContracts.Priorities.DeliberateOverride">
+            <summary>"I intend to be authoritative over the standard provider." Total conversions land here.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.BrokerSaveDiagnostics">
+             <summary>
+             Save diagnostics (Resolution Panel spec §7, broker spec §9): remember WHICH PROVIDERS were bound to which
+             capabilities when a save was written, and on load raise a non-blocking notice for any that changed.
+            
+               "This save was created with Wealth &amp; Trade providing colony net worth. It is now provided by Deep Economy
+                Overhaul. Economy-derived values (raid scaling, prices) may differ."
+            
+             INFORMATIONAL ONLY. It never gates loading — that would break save portability, which is the whole point of
+             the standalone-first invariant. A save made with a provider installed must still load without it (resolving
+             to the loader default), and vice versa.
+            
+             ★ WE RECORD BINDINGS, NOT VALUES. At load time nothing has been queried yet, so there is no provenance to
+             compare against — but every provider has already registered (mod `Init` runs long before the sidecar is
+             dispatched on `World.ActivateMap`). So the comparable, stable fact is "which provider WOULD win", computed
+             the same way resolution computes it: effective priority desc, load order asc, skipping user-disabled and
+             circuit-broken providers, falling through to the floor.
+            
+             ★ REGISTERED UNDER ITS OWN MOD ID, not <see cref="F:AshForge.ModLoader.ModFault.CoreId"/>. Fault counts are cumulative per id, and
+             the core id is the capability default floor's id — pouring this diagnostic's faults into that bucket would
+             muddy the floor's fault log (and, before the floor was made un-disableable, could have taken it down). This id
+             is ordinary: if these callbacks ever throw repeatedly, the circuit breaker disables the diagnostics — which is
+             exactly the right blast radius for a purely informational feature.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BrokerSaveDiagnostics.ComposedPrefix">
+            <summary>Marks an aggregate capability, whose "binding" is the composed SET of contributors.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.BrokerSaveDiagnostics.Blob.bindings">
+            <summary>capabilityId → bound provider mod id (or "composed:[a,b]" for aggregates).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.BrokerSaveDiagnostics.Notices">
+            <summary>Notices from the most recent load — rendered by both Panel surfaces. Empty when nothing changed.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BrokerSaveDiagnostics.Install">
+            <summary>Attach to the save pipeline. Call once, from the loader's broker install.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BrokerSaveDiagnostics.Reset">
+            <summary>Drop remembered notices (tests / clean reload).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BrokerSaveDiagnostics.CurrentBindings(AshForge.ModLoader.WorldStateBroker)">
+            <summary>
+            Which provider is bound to each capability right now. Mirrors the resolvers' ordering and skip rules
+            exactly — if these ever diverge, the notice lies.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.BusEvent">
+            <summary>One dispatched event: the catalog name plus its (typed) payload.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BusEvent.As``1">
+            <summary>Convenience: the payload as <typeparamref name="T"/>, or null if it isn't that type.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Bus">
+             <summary>
+             The AshForge event bus — CORE (lives in the loader, not a mod), so it exists before anything
+             subscribes. Mods publish and subscribe by name and never touch Harmony; AshForge owns the emit
+             points (the Harmony postfixes that feed game events in) and the catalog of event names/payloads
+             (see <see cref="T:AshForge.ModLoader.BusEvents"/>).
+            
+             THIN BY DESIGN (build sequence step 1): notification-only — fire-and-forget, order-irrelevant.
+             No subscriber priority, no argument mutation, no cancellation yet; that "interception" layer is
+             designed later against the first real interception consumer, not up front.
+            
+             Isolation is not optional: a subscriber that throws is caught and attributed to its owning mod via
+             <see cref="T:AshForge.ModLoader.ModFault"/>, a mod auto-disabled by the fault policy stops receiving events, and one bad
+             subscriber never breaks the publisher or its fellow subscribers.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Bus.GameTick">
+            <summary>
+            HOT per-frame channel — typed, allocation-free dispatch (see <see cref="T:AshForge.ModLoader.BusChannel`1"/>). Kept
+            off the string-keyed cold path above because it fires every frame: use this for per-tick work
+            (hotkey polling, drag boxes, raid scheduling), and <see cref="M:AshForge.ModLoader.Bus.Subscribe(System.String,System.String,System.Action{AshForge.ModLoader.BusEvent})"/>/<see cref="M:AshForge.ModLoader.Bus.Emit(System.String,System.Object)"/> for
+            rare ("cold") events like RaidSpawned. AshForge publishes it from one Harmony emit point.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Bus.Subscribe(System.String,System.String,System.Action{AshForge.ModLoader.BusEvent})">
+            <summary>
+            Subscribe <paramref name="handler"/> (owned by <paramref name="modId"/>) to an event. The modId is
+            what the subscriber's faults are attributed to and what the disabled-set is checked against, so it
+            must be the real mod id. Re-subscribing the same handler is ignored. Never throws.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Bus.Unsubscribe(System.String,System.Action{AshForge.ModLoader.BusEvent})">
+            <summary>Remove a previously-registered handler (no-op if absent). Never throws.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Bus.Emit(System.String,System.Object)">
+            <summary>
+            Publish an event to every subscriber. Each handler runs through <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/>,
+            so a throwing or disabled subscriber is isolated and the rest still run. Subscribers are snapshotted
+            under the lock and invoked outside it, so a handler may safely (un)subscribe during dispatch.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Bus.SubscriberCount(System.String)">
+            <summary>Number of live subscribers for an event (for inspection / tests).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.Bus.Reset">
+            <summary>Drop every subscription (tests / a clean reload). Not used in normal play.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.BusChannel`1">
+             <summary>
+             A strongly-typed HOT bus channel for events that fire on the per-frame path (thousands/sec). Kept
+             separate from the string-keyed cold <see cref="T:AshForge.ModLoader.Bus"/> events so the hot path obeys the bus-cheapness
+             rule: no string-dictionary lookup, a cached copy-on-write delegate array (so publish takes no lock),
+             no per-emit / per-subscriber heap allocation, and a true no-op when nobody is subscribed. Pair the
+             payload <typeparamref name="T"/> as a struct and dispatch allocates nothing.
+            
+             Isolation is identical to the cold path: every handler runs through <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke``1(System.String,System.Action{``0},``0,System.String)"/>
+             (no closure), so a throwing or disabled mod is isolated/attributed/timed like everywhere else.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.BusChannel`1.SubscriberCount">
+            <summary>Live subscriber count (the no-op gate a publisher checks before building a payload).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BusChannel`1.Subscribe(System.String,System.Action{`0})">
+            <summary>Subscribe a typed handler owned by <paramref name="modId"/>. Copy-on-write so publish is lock-free.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BusChannel`1.Unsubscribe(System.Action{`0})">
+            <summary>Remove a handler (no-op if absent).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BusChannel`1.Publish(`0)">
+            <summary>
+            Publish to all subscribers. One volatile read of the cached array — no lock, no string lookup; the
+            no-closure <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke``1(System.String,System.Action{``0},``0,System.String)"/> means a struct <typeparamref name="T"/> dispatches
+            with zero heap allocation.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.BusChannel`1.Reset">
+            <summary>Drop all subscribers (tests / clean reload).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.BusEvents">
+             <summary>
+             The AshForge-owned catalog of event names. AshForge owns the entire emit-point catalog (there is no
+             public / pluggable emit-point registration API — flexibility deliberately declined in favour of least
+             hassle for the community). The catalog grows here as the mod backlog needs new events; an advanced mod
+             that needs an uncovered hook can still patch directly with the shipped Harmony as a fallback, but the
+             blessed path is the bus.
+            
+             Constants (not bare strings) so a typo is a compile error and renames are safe.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BusEvents.RaidSpawned">
+            <summary>A raid has spawned. Notification (fire-and-forget). Payload: <see cref="T:AshForge.ModLoader.RaidSpawnedEvent"/>.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BusEvents.RaidIncoming">
+            <summary>
+            A raid is INCOMING — the telegraph fired just BEFORE raiders spawn, so a consumer can react in time
+            (Squad Select stands squads to; World Map marks an origin). Notification (fire-and-forget), cold.
+            Payload: <see cref="T:AshForge.ModLoader.RaidIncomingEvent"/>. Distinct from <see cref="F:AshForge.ModLoader.BusEvents.RaidSpawned"/> (which fires AFTER
+            the spawn, for tallies). This is the WO-MIG-002 handshake — a cross-mod link via the event, not a
+            hard reference.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BusEvents.DestinationDiscovered">
+             <summary>
+             The game discovered a new expedition destination (the visitor "tells you about a new location" lead,
+             or anything else that calls <c>ExpeditionManager.AddDestination</c>). Notification (fire-and-forget),
+             cold (fires at most a few times per game-day). Payload: <see cref="T:AshForge.ModLoader.DestinationDiscoveredEvent"/>.
+            
+             This is the World Map feature's discovery feed: AshForge postfixes the single chokepoint
+             (<c>Ascent.Maps.ExpeditionManager.AddDestination(DestinationDec)</c>) once and republishes here, so
+             the map mod registers a node without ever patching the game itself.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BusEvents.ExpeditionStarted">
+            <summary>
+            An expedition was launched (the player confirmed travel to a destination). Notification, cold.
+            Payload: <see cref="T:AshForge.ModLoader.ExpeditionStartedEvent"/>. Fires for EVERY expedition — whether launched from the
+            World Map or the game's own expedition menu — so the map can mark the destination's node visited.
+            AshForge postfixes the single chokepoint <c>Ascent.Maps.ExpeditionManager.StartExpedition</c>.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BusEvents.CaptiveSaleOffered">
+            <summary>
+            ★ RESERVED for Chains of Ash (design-review addition). A captive has been OFFERED for sale/ransom —
+            Chains publishes this when a caravan could buy a held captive; Wealth &amp; Trade subscribes to price it
+            against the economy. Notification, cold. Payload: <see cref="T:AshForge.ModLoader.CaptiveSaleOfferedEvent"/>. This plus
+            <see cref="F:AshForge.ModLoader.BusEvents.CaptiveSaleCompleted"/> is the sale half of the Chains↔Wealth↔World Map showpiece; it is a
+            deliberate EVENT (a thing that happened), not a broker capability. The roster half is
+            <see cref="F:AshForge.ModLoader.Capabilities.PrisonerRoster"/>.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.BusEvents.CaptiveSaleCompleted">
+            <summary>
+            ★ RESERVED for Chains of Ash. A captive sale/ransom COMPLETED — carries the credit + reputation
+            deltas Wealth &amp; Trade already knows how to apply. Notification, cold. Payload:
+            <see cref="T:AshForge.ModLoader.CaptiveSaleCompletedEvent"/>.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.GameTickData">
+            <summary>
+            Payload for the hot <see cref="F:AshForge.ModLoader.Bus.GameTick"/> channel. A <b>struct</b> on purpose — passed to a typed
+            <c>Action&lt;GameTickData&gt;</c> it dispatches with zero heap allocation on the per-frame path.
+            <see cref="F:AshForge.ModLoader.GameTickData.Source"/> is the active input-mode object (the game's MouseMode); typed as <see cref="T:System.Object"/>
+            because the catalog has no compile-time game reference — a subscriber casts it (<c>Source as MouseModeSelect</c>).
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.RaidSpawnedEvent">
+            <summary>
+            Payload for <see cref="F:AshForge.ModLoader.BusEvents.RaidSpawned"/>. Payload contracts live in AshForge (the catalog home)
+            so every mod shares one stable type — a subscriber in another assembly reads the same shape the
+            publisher wrote. Keep these plain data carriers (no game/dec/Godot types) so the catalog has no
+            compile-time coupling to the game.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RaidSpawnedEvent.Count">
+            <summary>How many raiders were actually spawned this raid.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RaidSpawnedEvent.Wealth">
+            <summary>The derived settlement wealth the raid size was scaled from.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RaidSpawnedEvent.Forced">
+            <summary>True if the player forced it (dev hotkey), false if the scheduler fired it.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.DestinationDiscoveredEvent">
+            <summary>
+            Payload for <see cref="F:AshForge.ModLoader.BusEvents.DestinationDiscovered"/>. Carries the human-readable fields the loader
+            has already pulled off the game's <c>DestinationDec</c> (so a subscriber needn't reflect to display a
+            node), plus the raw dec as <see cref="T:System.Object"/> for the subscriber that needs the reference itself —
+            e.g. to match it against <c>ExpeditionManager.AvailableDestinations</c> when launching travel.
+            Typed <see cref="T:System.Object"/> because the catalog has no compile-time game reference; a consumer that needs
+            to act on it reflects or matches by reference.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.DestinationDiscoveredEvent.Dec">
+            <summary>The raw game <c>DestinationDec</c> (typed <see cref="T:System.Object"/>). Use for reference-matching
+            against the live destination list; never assume a concrete type at compile time.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.DestinationDiscoveredEvent.Label">
+            <summary>The destination's display label (may be null if the dec had none).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.DestinationDiscoveredEvent.Description">
+            <summary>The destination's description text (may be null).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ExpeditionStartedEvent">
+            <summary>
+            Payload for <see cref="F:AshForge.ModLoader.BusEvents.ExpeditionStarted"/>. Carries the destination's raw <c>DestinationDec</c>
+            (as <see cref="T:System.Object"/>) so a subscriber can match it to its own node (e.g. by the dec's name) and react
+            — the World Map marks that node visited.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ExpeditionStartedEvent.Dec">
+            <summary>The destination's raw game <c>DestinationDec</c> (typed <see cref="T:System.Object"/>).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.RaidIncomingEvent">
+            <summary>
+            Payload for <see cref="F:AshForge.ModLoader.BusEvents.RaidIncoming"/> — the pre-spawn telegraph. Plain data (no game types)
+            so a subscriber in any assembly reads the same shape Raiders wrote.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RaidIncomingEvent.Size">
+            <summary>How many raiders are about to spawn.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RaidIncomingEvent.Faction">
+            <summary>The attacking faction id (e.g. "Hostiles").</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RaidIncomingEvent.WealthBasis">
+            <summary>The colony net worth the raid size was scaled from (the broker-resolved value).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.RaidIncomingEvent.EtaDays">
+            <summary>Ticks/days until arrival (0 = imminent — spawns this frame).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CaptiveSaleOfferedEvent">
+            <summary>Payload for <see cref="F:AshForge.ModLoader.BusEvents.CaptiveSaleOffered"/> (reserved for Chains of Ash).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CaptiveSaleOfferedEvent.PawnName">
+            <summary>Captive's pawn name (matches a <see cref="F:AshForge.ModLoader.PrisonerInfo.PawnName"/> in the roster).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CaptiveSaleOfferedEvent.BuyerFaction">
+            <summary>The buying/ransoming faction id.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CaptiveSaleOfferedEvent.AskingPrice">
+            <summary>The asking price in credits (Wealth &amp; Trade may re-price).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CaptiveSaleCompletedEvent">
+            <summary>Payload for <see cref="F:AshForge.ModLoader.BusEvents.CaptiveSaleCompleted"/> (reserved for Chains of Ash).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CaptiveSaleCompletedEvent.CreditsGained">
+            <summary>Credits the colony received (Wealth applies to the ledger).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CaptiveSaleCompletedEvent.ReputationDelta">
+            <summary>Reputation delta toward <see cref="F:AshForge.ModLoader.CaptiveSaleCompletedEvent.BuyerFaction"/> (Wealth applies to standing).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ResolutionMode">
+            <summary>
+            How the broker turns the set of registered providers for a capability into one answer.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ResolutionMode.Exclusive">
+            <summary>One provider wins (highest priority, ties by load order); the rest are ignored.
+            For single-valued state — "colony net worth is one number."</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ResolutionMode.Aggregate">
+            <summary>Every valid provider contributes and the broker <c>Compose</c>s them (with the
+            loader default always the base). For state that stacks — "regional threat = baseline +
+            raid pressure + camp proximity."</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CapabilityId">
+             <summary>
+             The identity of a capability: a reserved-or-author namespace, a dotted name, and a schema MAJOR
+             version. Canonical string form is <c>namespace.name@version</c> — e.g. <c>ashforge.colony.net_worth@1</c>.
+            
+             Equality is case-insensitive on the JOINED name (see <see cref="M:AshForge.ModLoader.CapabilityId.Equals(AshForge.ModLoader.CapabilityId)"/> — the namespace/name split is
+             not recoverable from the canonical string, so identity must not depend on it) and exact on
+             version — <c>net_worth@1</c> and <c>net_worth@2</c> are DIFFERENT capabilities that coexist in the
+             registry, which is how an old v1 consumer keeps working after a v2 ships (LOADER-BROKER-001 §4.1).
+            
+             A single integer version is the schema major only: additive, backward-compatible changes do NOT bump
+             it (a v1 consumer must tolerate extra fields); a schema-breaking change publishes a new contract at v2.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CapabilityId.Namespace">
+            <summary>"ashforge" (reserved for first-party contract DEFINITION) or "author.mod" (third-party).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CapabilityId.Name">
+            <summary>Dotted path within the namespace, e.g. "colony.net_worth".</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CapabilityId.Version">
+            <summary>Schema major. A breaking payload change bumps this; additive changes do not.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CapabilityId._family">
+             <summary>
+             The joined, case-folded name — computed ONCE here rather than on every read.
+            
+             ★ This is a hot path, not a micro-optimisation: <see cref="P:AshForge.ModLoader.CapabilityId.Family"/> is the registry's key and now
+             also backs equality and hashing, so it is touched on every resolution, every tick. Building it per
+             call allocated two strings each time (the concat and the case-fold) — the shipped code already paid
+             that on every <c>GetHashCode</c>. Precomputing makes both paths allocation-free.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityId.Family">
+            <summary>The version-agnostic key ("namespace.name") used to group all majors of one capability
+            in the registry. Case-folded so lookups are casing-independent.
+            ★ <c>default(CapabilityId)</c> has no family — the null-coalesce keeps it behaving as the old
+            computed form did (a lone "."), since <see cref="M:AshForge.ModLoader.CapabilityId.TryParse(System.String,AshForge.ModLoader.CapabilityId@)"/> hands back a default on failure.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityId.Equals(AshForge.ModLoader.CapabilityId)">
+             <summary>
+             Identity is <see cref="P:AshForge.ModLoader.CapabilityId.Family"/> + <see cref="F:AshForge.ModLoader.CapabilityId.Version"/> — the CANONICAL NAME, not the two segments
+             it happens to be stored in.
+            
+             ★★ THIS IS LOAD-BEARING, AND IT WAS A REAL BUG. The canonical string form is
+             <c>namespace.name@version</c>, which does NOT record where the namespace ends — and it cannot, because
+             both halves are dotted. A first-party id is namespace <c>ashforge</c> + name <c>colony.net_worth</c>;
+             a THIRD-PARTY id is namespace <c>ashforge.mining</c> + name <c>production</c>, since the loader itself
+             requires third-party contracts to live under <c>author.mod.*</c>. So <c>TryParse</c>, which has only
+             the string, splits at the first dot and reconstructs every third-party id with the segments in the
+             wrong halves.
+            
+             Comparing the halves separately therefore made a parsed id UNEQUAL to the identical registered one,
+             and the declared-vs-registered reconciliation reported every third-party provider as
+             REGISTERED-NOT-DECLARED — including shipped Optics, from 1.0.20 onward, with a correct manifest.
+            
+             Comparing the joined name fixes it at the root: both spellings produce the same <c>Family</c>, so they
+             are the same capability, which is exactly what they always were. Two capabilities can never share a
+             family (it is the registry's own key), so nothing distinct is merged by this.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityId.GetHashCode">
+            <summary>Hashed on the same thing <see cref="M:AshForge.ModLoader.CapabilityId.Equals(AshForge.ModLoader.CapabilityId)"/> compares — the joined, case-folded name plus
+            the version. Hashing the halves separately would put two EQUAL ids in different buckets, which is the
+            classic way a dictionary starts losing entries it definitely contains.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityId.TryParse(System.String,AshForge.ModLoader.CapabilityId@)">
+             <summary>
+             Parse the canonical <c>namespace.name@version</c> form (best-effort; returns false on anything
+             malformed). Handy for manifests, config files, and log lines.
+            
+             ★★ THE SPLIT IS A GUESS, AND THE STRING CANNOT SETTLE IT. Both halves are dotted, so
+             <c>ashforge.mining.production@1</c> is equally readable as namespace <c>ashforge</c> + name
+             <c>mining.production</c> (the first-party shape) or namespace <c>ashforge.mining</c> + name
+             <c>production</c> (the third-party shape). This takes the first dot, so a third-party id comes back
+             with its segments in the wrong halves.
+            
+             That is SAFE for identity — <see cref="M:AshForge.ModLoader.CapabilityId.Equals(AshForge.ModLoader.CapabilityId)"/>, <see cref="M:AshForge.ModLoader.CapabilityId.GetHashCode"/> and <see cref="P:AshForge.ModLoader.CapabilityId.Family"/>
+             all use the joined name, so a parsed id matches its registered twin either way — but it means
+             <see cref="F:AshForge.ModLoader.CapabilityId.Namespace"/> and <see cref="F:AshForge.ModLoader.CapabilityId.Name"/> READ OFF A PARSED ID ARE INDICATIVE ONLY.
+            
+             ⚠ In particular, do NOT feed a parsed id to the reserved-namespace gate in
+             <c>WorldStateBroker.RegisterCapability</c>: it tests <c>Namespace == "ashforge"</c>, which a parsed
+             third-party id spuriously satisfies, so a legitimate <c>author.mod.*</c> contract would be refused.
+             Registration takes ids CONSTRUCTED by their owner, which is why that gate is correct today.
+             </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CapabilityRequest">
+            <summary>
+            A version-negotiated query: a family (namespace + name) plus an inclusive version range. The broker
+            resolves against the HIGHEST available version in <c>[MinVersion, MaxVersion]</c> that has a satisfying
+            definition; if nothing in range can answer, <see cref="M:AshForge.ModLoader.WorldStateBroker.TryQuery``1(AshForge.ModLoader.CapabilityRequest,``0@,System.Int32@)"/> returns false and
+            the consumer takes its own standalone path (LOADER-BROKER-001 invariant #7).
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityRequest.#ctor(System.String,System.String,System.Int32)">
+            <summary>Convenience for the common single-version request (min == max).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Contribution`1">
+             <summary>
+             One provider's contribution to an <see cref="F:AshForge.ModLoader.ResolutionMode.Aggregate"/> capability, carrying the
+             metadata a <c>Compose</c> needs to order or weight contributions — the provider's id, its declared
+             priority, the schema version it spoke, and the payload itself.
+            
+             ★ WHY the payload isn't handed over bare: the original spec's <c>Compose(IReadOnlyList&lt;T&gt;)</c>
+             threw away exactly the metadata the Resolution Panel's per-contributor weighting UI needs
+             (HUB-RESOLUTION-001 §4). Passing <see cref="T:AshForge.ModLoader.Contribution`1"/> instead is the review fix that makes
+             weighting/ordering expressible at all — and it's impossible to retrofit once aggregate providers exist.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contribution`1.ProviderId">
+            <summary>The id of the mod/loader that produced this payload ("ashforge.loader" for the default base).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contribution`1.Priority">
+            <summary>The producing provider's declared priority (the default base is 0).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contribution`1.Version">
+            <summary>The schema version this contribution was produced at (always the pinned resolution version).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contribution`1.IsDefault">
+            <summary>True if this is the loader default (the permanent base contribution), false for a real provider.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.Contribution`1.Payload">
+            <summary>The validated payload.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.IWorldStateContext">
+             <summary>
+             Read-only view of engine/game + broker state handed to a provider's <c>Provide</c> and to a
+             capability's <c>Default</c>. Providers must be PURE READS — no mutation, no side effects (the Mod Kit
+             Roslyn auditor flags attempts; SafeInvoke contains any that slip through).
+            
+             It also lets a provider read OTHER capabilities via <see cref="M:AshForge.ModLoader.IWorldStateContext.Query``1(AshForge.ModLoader.CapabilityId)"/> — but that read is
+             reentrancy-guarded: a capability currently being resolved returns its last-known value instead of
+             recursing, so a provider cycle (A reads B reads A) can never hang. See <see cref="T:AshForge.ModLoader.WorldStateBroker"/>.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.IWorldStateContext.Tick">
+            <summary>The game tick at which this resolution is happening (0 if unknown / pre-game).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.IWorldStateContext.Query``1(AshForge.ModLoader.CapabilityId)">
+            <summary>
+            Read another capability from inside a provider. Reentrancy-safe: if <paramref name="capability"/>
+            is already on the current resolution stack, this returns its last-resolved value (or the default),
+            never recursing. Prefer reading raw game state directly where you can; use this only for genuine
+            cross-capability composition.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ICapabilityProvider`1">
+            <summary>
+            A mod (or the loader) registers a provider to supply — or override — a capability. Priority orders
+            exclusive resolution (higher wins; ties break by load order, deterministically); in aggregate mode
+            every valid provider contributes. <see cref="M:AshForge.ModLoader.ICapabilityProvider`1.Provide(AshForge.ModLoader.IWorldStateContext)"/> must be a pure read of world state.
+            </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ICapabilityProvider`1.Capability">
+            <summary>The capability + the exact schema version this provider speaks.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ICapabilityProvider`1.Priority">
+            <summary>Higher wins in <see cref="F:AshForge.ModLoader.ResolutionMode.Exclusive"/>. The loader default is priority 0.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ICapabilityProvider`1.Provide(AshForge.ModLoader.IWorldStateContext)">
+            <summary>Produce this provider's value. Pure read; may throw — the broker isolates it via SafeInvoke.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ProviderDescriptor">
+            <summary>A registered provider's metadata, for introspection (the Resolution Panel, reconciliation).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ProviderDescriptor.Priority">
+            <summary>What the provider itself DECLARED (<c>ICapabilityProvider.Priority</c>).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ProviderDescriptor.EffectivePriority">
+            <summary>The priority actually used to resolve — differs from <see cref="F:AshForge.ModLoader.ProviderDescriptor.Priority"/> when the user reordered.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ProviderDescriptor.Enabled">
+            <summary>False when the user disabled this provider (spec §4). Distinct from circuit-broken.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ProviderDescriptor.Overridden">
+            <summary>
+            DERIVED: resolution isn't using the declared priority, so the panel shows "declared 100 → 150".
+            Not a stored flag — see the note on <c>CapabilityDefinition&lt;T&gt;.Entry</c>.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CapabilityDefinitionBase">
+            <summary>
+            Non-generic base so the broker can hold a heterogeneous registry of definitions (one per
+            <see cref="T:AshForge.ModLoader.CapabilityId"/>) and resolve them without knowing <c>T</c> at the call site. All the
+            type-specific work lives in <see cref="T:AshForge.ModLoader.CapabilityDefinition`1"/>; the broker only ever touches this
+            surface plus the boxed resolution entry point.
+            </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityDefinitionBase.Unit">
+            <summary>
+            The declared UNIT of this capability's headline scalar (e.g. "credits", "normalized 0..1"), or null.
+            ★ INVARIANT (review finding from the Raiders/Wealth migration): a capability whose payload is a bare
+            number carries no self-describing unit — two providers can post the same SHAPE on different SCALES
+            (Wealth's valued credits vs Raiders' quantity proxy) and both pass schema validation, silently
+            corrupting any consumer that scales off the number. So a scalar capability MUST declare its unit, and
+            providers post ONLY in that unit. Where a meaningful band exists, pass a scalar range too — it is
+            range-enforced at the boundary. (Range can't separate a same-band wrong unit; provenance +
+            consume-not-provide handles that.)
+            </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityDefinitionBase.PayloadType">
+            <summary>The CLR payload type this capability resolves to. The broker rejects a <c>Query&lt;T&gt;</c>
+            whose <c>T</c> doesn't match this — the runtime guard that closes the cross-assembly type-erasure
+            hole (a consumer querying the wrong type gets a fallback + a log, never a bad cast).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityDefinitionBase.IsLoaderOwned">
+            <summary>Whether this definition was registered by the loader itself (reserved-namespace / catalog).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityDefinitionBase.OwnerId">
+            <summary>
+            Fault-attribution id for THIS definition's own lambdas (default / validate / scalar / compose).
+            <see cref="F:AshForge.ModLoader.ModFault.CoreId"/> for the loader catalog; the REGISTERING MOD'S id for a third-party
+            <c>author.mod.*</c> definition. Without this, a mod-supplied compose/validate ran under CoreId — the
+            un-disableable core — so a throwing third-party lambda was mis-blamed on the loader and could never be
+            circuit-broken (issue #4 B1). Defaults to CoreId so an un-set/loader path behaves exactly as before.
+            </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityDefinitionBase.RefreshEveryTicks">
+            <summary>
+            A DECLARED refresh cadence in ticks (0 = none). If &gt; 0, the broker re-resolves this capability every
+            N ticks on its own — for a provider whose underlying state changes WITHOUT an explicit
+            <see cref="M:AshForge.ModLoader.WorldStateBroker.Invalidate(AshForge.ModLoader.CapabilityId)"/> (a "volatile" source it can't cheaply notify on). A cap that
+            declares no cadence AND is never Invalidated falls back to the broker's default volatile interval
+            (spec §7). A push-driven cap (declares nothing, Invalidates on change) leaves this 0 and is never
+            auto-refreshed. The recompute still fires OnChanged only on a real value change (comparer-diffed).
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityDefinitionBase.SetProviderEnabled(System.String,System.Boolean)">
+            <summary>Live enable/disable of one provider (in-game safety valve). False when no such provider here.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityDefinitionBase.ResetProviderOverridesLive">
+            <summary>
+            Undo the LIVE half of a "reset to declared order": re-enable every provider this session. Returns true
+            only if something changed, so a Reset against a clean store doesn't fire a needless Invalidate.
+            Priority is deliberately NOT restored — it was bound at registration and a live re-sort would flip an
+            exclusive winner mid-tick. See <see cref="M:AshForge.ModLoader.WorldStateBroker.ResetOverrides(AshForge.ModLoader.CapabilityId)"/>.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityDefinitionBase.DescribeProviders">
+            <summary>The registered providers' metadata (for the Resolution Panel + declared-vs-registered reconciliation).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CapabilityDefinition`1">
+             <summary>
+             The authoritative definition of one capability at one schema version: its resolution mode, boundary
+             validation, aggregate composition, change-equality, and the mandatory loader DEFAULT that guarantees
+             every query has an answer with zero mods installed.
+            
+             ★ THE STRUCTURAL SPINE (review fix): type identity, validation, equality, composition, and the default
+             all live HERE — bound once at registration — instead of being scattered across the query call site,
+             an ad-hoc comparer, and a naked <c>Compose</c>. The broker owns one of these per capability and drives
+             everything through it. That single move collapses four separate concerns from the design review
+             (type erasure, missing OnChanged comparer, identity-less Compose, RegisterContract/Contributor drift)
+             into one object, and it's why the broker's own surface can stay small.
+            
+             Contracts are LOADER-OWNED for the official <c>ashforge.*</c> catalog (mods register providers, not
+             contracts — WO-MIG §0.1). A third-party mod may register its own <c>author.mod.*</c> definition.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityDefinition`1.#ctor(AshForge.ModLoader.CapabilityId,AshForge.ModLoader.ResolutionMode,System.Func{AshForge.ModLoader.IWorldStateContext,`0},System.Func{`0,System.Boolean},System.Func{System.Collections.Generic.IReadOnlyList{AshForge.ModLoader.Contribution{`0}},`0},System.Collections.Generic.IEqualityComparer{`0},System.String,System.Func{`0,System.Double},System.Nullable{System.Double},System.Nullable{System.Double},System.Int32)">
+            <param name="id">Capability id including the schema version this definition speaks.</param>
+            <param name="mode">Exclusive (one winner) or Aggregate (composed).</param>
+            <param name="defaultProvider">The priority-0 floor — MUST return a valid payload from engine/loader
+            state only, never another mod. This is what makes standalone-first the floor, not a hope.</param>
+            <param name="validate">Boundary schema check; a provider whose output fails is dropped as a fault.
+            Pure and cheap. Null ⇒ accept anything.</param>
+            <param name="compose">Aggregate fold over surviving contributions (default always included as base).
+            Required for Aggregate mode; ignored for Exclusive.</param>
+            <param name="comparer">Change-equality for OnChanged (so a recompute that lands the same value does
+            NOT fire handlers). Null ⇒ the type's default equality.</param>
+            <param name="unit">The declared unit of the headline scalar (see <see cref="!:Unit"/>). Strongly
+            recommended for any numeric payload.</param>
+            <param name="scalarSelector">Extracts the headline scalar from a payload, for range enforcement.
+            Pair with <paramref name="scalarMin"/>/<paramref name="scalarMax"/>. Null ⇒ no range check.</param>
+            <param name="refreshEveryTicks">Declared refresh cadence in ticks (0 = none). See <see cref="!:RefreshEveryTicks"/>.</param>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityDefinition`1.SetProviderEnabled(System.String,System.Boolean)">
+            <summary>
+            Live enable/disable of one provider — the in-game safety valve for a misbehaving provider (spec §4).
+            Returns false when this capability has no such provider (an override for an uninstalled mod is inert).
+            Only the ENABLED flag may change at runtime; reordering is Hub-only and applies at the next load, so
+            resolution can't flip mid-game under a consumer.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityDefinition`1.ResetProviderOverridesLive">
+             <summary>
+             Re-enable every provider (the live half of "reset to declared order"). Symmetric with
+             <see cref="M:AshForge.ModLoader.CapabilityDefinition`1.SetProviderEnabled(System.String,System.Boolean)"/>: enable/disable is immediate, priority is next-load.
+            
+             Returns TRUE only when something actually changed, so a Reset pressed against a clean store is a silent
+             no-op instead of firing a pointless Invalidate + log line on every capability.
+            
+             ★ EffectivePriority is deliberately NOT restored. It was bound at registration; re-sorting now would flip
+             an exclusive winner mid-tick under a consumer that already read this tick. The store is clean, yet this
+             session keeps resolving on the old priority — and because <c>Overridden</c> is derived from
+             <c>EffectivePriority != Provider.Priority</c>, the panel keeps printing <c>pri 100→150</c> for free,
+             telling the truth about what resolution is using rather than about what the store says.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityDefinition`1.InvokeDefault(AshForge.ModLoader.IWorldStateContext)">
+            <summary>Compute the loader default in isolation (used as the aggregate base and the exclusive floor).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CapabilityOverrides">
+             <summary>
+             The user's provider overrides — reorder and disable — persisted in a LOADER config file, never inside a mod.
+             (Resolution Panel spec §6.)
+            
+             FILE: <c>&lt;ModsRoot&gt;/ashloader.overrides.json</c>.
+            
+             ★ SINGLE-WRITER BY CONSTRUCTION. The GAME is the only writer — the in-game panel is the one surface that
+             mutates the store. The Hub READS this file (folding it into its manifest prediction, which is how the
+             predicted view and the live view agree) and never writes it. That is not an accident to be fixed later:
+             it is what lets two processes share the file with no lockfile, no merge, and no shutdown race. The only
+             synchronization needed is that <see cref="M:AshForge.ModLoader.CapabilityOverrides.Save"/> is ATOMIC, so a concurrent reader sees either the whole
+             old file or the whole new one. Do not add a Hub write path without first adding a locking scheme.
+            
+             Shape:
+             <code>
+             { "format": 1,
+               "capabilities": {
+                 "ashforge.colony.net_worth@1": [
+                   { "providerModId": "ashforge.wealth", "effectivePriority": 150, "enabled": true }
+                 ] } }
+             </code>
+            
+             INVARIANTS
+             • **Mod-set tolerant.** An entry naming a provider that isn't installed is INERT, not an error — it simply
+               never matches at registration. Reinstalling the mod re-activates the override. So we never prune entries
+               for absent mods on save; that would silently destroy the user's intent whenever they disable a mod.
+             • **Never breaks a consumer.** Disabling every provider still resolves: the loader default is not a provider,
+               it's the floor (`InvokeDefault`). The worst a user override can do is degrade signal, never function.
+             • **`effectivePriority` is nullable** — absent means "keep whatever the provider declared". Disabling a
+               provider must not silently pin its priority.
+             • Corrupt / unreadable file ⇒ NO overrides (log + carry on). An override store must never gate loading.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.CapabilityOverrides.SwapAttempts">
+            <summary>Retry budget for the atomic swap when a reader momentarily holds the file (see <see cref="M:AshForge.ModLoader.CapabilityOverrides.Save"/>).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CapabilityOverrides.Entry">
+            <summary>One user override for one provider on one capability.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityOverrides.Entry.effectivePriority">
+            <summary>Null ⇒ inherit the provider's declared priority.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityOverrides.Persistent">
+            <summary>True when a file path is known and writes will persist.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.CapabilityOverrides.OverriddenCapabilityCount">
+            <summary>Number of capabilities carrying at least one override (inspection / tests).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.Load(System.String)">
+            <summary>
+            Read the store. Call ONCE at boot, after the mods root is known and BEFORE any mod registers a provider —
+            overrides are applied at registration time, so a late load would leave already-registered providers unmoved.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.TryGet(AshForge.ModLoader.CapabilityId,System.String,System.Nullable{System.Int32}@,System.Boolean@)">
+            <summary>
+            The user's override for one provider on one capability, if any. <paramref name="priority"/> is null when
+            the user reordered nothing (the provider's declared priority stands).
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.SetEnabled(AshForge.ModLoader.CapabilityId,System.String,System.Boolean)">
+            <summary>Enable or disable one provider. Persisted immediately (the in-game safety valve, spec §4).
+            Returns false if the change could not be written — it still applies this session.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.SetPriority(AshForge.ModLoader.CapabilityId,System.String,System.Int32)">
+            <summary>Set a user priority override (applied at NEXT load, never mid-session; spec §4).
+            Returns false if the change could not be written.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.ResetCapability(AshForge.ModLoader.CapabilityId)">
+            <summary>
+            Clear every override for a capability — "reset to declared order" (spec §4).
+            Returns true only if the store actually held something, so a Reset against a clean store can stay silent
+            instead of rewriting the file and logging.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.Reset">
+            <summary>
+            Drop everything and detach from disk (tests / clean reload). Because <c>_path</c> goes null, subsequent
+            mutations stay in memory and <see cref="M:AshForge.ModLoader.CapabilityOverrides.Save"/> is a no-op — so a test can seed overrides through the
+            normal public API without ever writing a file.
+            ★ Deliberately NOT called from <c>WorldStateBroker.Reset()</c>: that would detach the live store from its
+            file on a hot reload, silently turning every later Save() into a no-op and losing the user's overrides.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.Save">
+             <summary>
+             Write the store. File I/O runs OUTSIDE the lock (snapshot, then write) — never hold a lock over disk.
+            
+             ★ ATOMIC: serialize to a sibling temp file, then swap it into place. A crash, a full disk, or a
+             concurrent reader (the Hub) can never observe a truncated or half-serialized store — the swap either
+             happened or it didn't. A plain <c>File.WriteAllText</c> here would open the real file, truncate it, and
+             only then start writing: a reader that lands in that window sees an EMPTY override set, i.e. every one
+             of the user's choices silently reverted. The temp file is a sibling so the swap stays on one volume.
+            
+             ★ THE SWAP NEEDS BOTH SIDES. On Windows, <c>File.Replace</c> raises a sharing violation if any reader
+             holds the destination open without <c>FileShare.Delete</c> — so a pure reader can make the sole writer
+             FAIL. Atomicity here is therefore only half the contract: every reader of this file must open it with
+             <c>FileShare.ReadWrite | FileShare.Delete</c> (see <see cref="M:AshForge.ModLoader.CapabilityOverrides.OpenForShare(System.String)"/>, which the Hub mirrors),
+             and the writer retries briefly to ride out a reader that is momentarily between opens.
+             </summary>
+             <returns>
+             TRUE when the store is now on disk (or there is no store to write, i.e. tests). FALSE when persistence
+             FAILED — the caller has usually already applied the change LIVE, so a false here means
+             "this session yes, next launch no" and the user must be told. Silently dropping it would recreate, on
+             the failure path, exactly the session-vs-persistence divergence this whole store exists to avoid.
+             </returns>
+        </member>
+        <member name="M:AshForge.ModLoader.CapabilityOverrides.OpenForShare(System.String)">
+            <summary>
+            Open the store for reading the way every reader MUST. <c>FileShare.Delete</c> is the load-bearing flag:
+            without it this handle blocks the game's atomic <c>File.Replace</c> swap and the writer fails. Readers
+            in other processes (the Hub) mirror this call rather than referencing the loader.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.DecCacheGuard">
+             <summary>
+             Keeps the GAME's own static dec caches honest across the loader's repeated dec parses.
+            
+             ── THE BUG THIS EXISTS TO KILL (proven 2026-07-13) ────────────────────────────────────────────────────────
+             `Dec.Database.Clear()` clears the database and nulls the fields of [StaticReferences] classes. It knows
+             nothing about caches the GAME keeps on its own types. And the game keeps one:
+            
+                 class HairStyleDec : Dec {
+                     public static readonly List&lt;HairStyleDec&gt; AllMaleStyles   = new();
+                     public static readonly List&lt;HairStyleDec&gt; AllFemaleStyles = new();
+                     public override void PostLoad(...) { ... AllMaleStyles.Add(this); ... }   // ← APPENDS
+                 }
+            
+             Every `ParserModular.Finish()` runs `PostLoad` on every dec, so every parse APPENDS a whole fresh
+             generation of HairStyleDecs on top of the last one — while only the FINAL generation is registered in the
+             database. New pawns pick their hair from that LIST, not from the database:
+            
+                 HairStyle = (Gender == Female ? AllFemaleStyles : AllMaleStyles).PickRandomElement()
+            
+             …so a pawn can be handed an instance the save writer will refuse: `WriteDec` compares by REFERENCE against
+             the database and, on a mismatch, writes "&lt;name&gt;_DELETED" — which reads back as a silent NULL and NREs in
+             `RigController.UpdateAppearance` during `Map.Activate`. The map never activates. The save is dead.
+            
+             We parse more than once whenever a mod fails def validation (the bisect path in <see cref="T:AshForge.ModLoader.ModValidator"/>).
+             MEASURED: with one bad mod present, 6 parses → the lists held 6 copies of every style → 6 of 7 pawns were
+             unsaveable. With no bad mod: 1 parse, 0 duplicates, every pawn saved cleanly.
+            
+             ── WHY BASELINE-RESTORE AND NOT JUST Clear() ──────────────────────────────────────────────────────────────
+             Clearing is only CORRECT for caches that `PostLoad` REPOPULATES. Reflection cannot distinguish those from a
+             cache populated ONCE (a static initializer or a lazy snapshot of the database — the game already has one of
+             those shape: `PlantDec[] AllCrops = Database&lt;PlantDec&gt;.List.Where(x =&gt; x.IsCrop)`). Blanket-clearing such a
+             cache would empty it with nothing to refill it — a quieter, worse bug than the one we are fixing, shipped by
+             the very code meant to prevent it.
+            
+             So: snapshot each cache's PRISTINE contents once, before our first parse, and RESTORE to that baseline
+             before each subsequent one.
+               • append-on-PostLoad cache  → baseline is empty → restore == clear → PostLoad refills it. ✔
+               • populated-once cache      → baseline holds its contents → preserved. ✔
+               • a parse that THROWS       → the caches are still restorable, not left empty. ✔
+             The right behaviour falls out of the baseline; we never have to guess which kind a cache is.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DecCacheGuard.Snapshot(System.Reflection.Assembly)">
+            <summary>
+            Record the pristine contents of every game-side dec cache. MUST be called before the loader's first
+            parse — that is what makes the baseline pristine.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DecCacheGuard.RestoreBaseline">
+            <summary>
+            Put every protected cache back to its pristine contents. Called right after Dec.Database.Clear(), so a
+            re-parse repopulates from a clean slate instead of stacking a new generation on the old one.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DecCacheGuard.VerifyPopulated(System.Reflection.Assembly)">
+             <summary>
+             After the final parse: every cache that `PostLoad` is supposed to fill MUST be non-empty. Called from the
+             Finish postfix, so it covers both paths (our parse, and the game's own when we pass through).
+            
+             ★ WHY THIS EXISTS: <see cref="M:AshForge.ModLoader.DecCacheGuard.RestoreBaseline"/> empties a PostLoad-populated cache and relies on a parse
+             following it to refill it. If any path ever clears and then does NOT parse — a throw between the two, an
+             early return, a future refactor — the list stays empty and the game dies LATER, at a random
+             `PickRandomElement()` on an empty list, with no hint of the cause. That is precisely the shape of the bug
+             this whole class exists to kill. So we assert the invariant at load: a named crash at startup is a good
+             outcome; a mystery crash an hour into a colony is not.
+            
+             ★★ Asserts ONLY on caches we have OBSERVED a parse fill (<see cref="F:AshForge.ModLoader.DecCacheGuard.Cache.ParseFilled"/>). It must never
+             INFER that a cache ought to be populated — see the note in <see cref="M:AshForge.ModLoader.DecCacheGuard.RestoreBaseline"/>: a mod's static
+             HashSet&lt;ItemDec&gt; that is empty by design would have been thrown on at every launch, bricking the game for
+             everyone who had that mod. A guard that can brick a healthy game is worse than the bug it guards against.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DecCacheGuard.IsMutableDecCollection(System.Type,System.Type)">
+            <summary>List&lt;T&gt; / HashSet&lt;T&gt; where T : Dec — a cache we can both clear and refill.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.DecPatch">
+             <summary>
+             Harmony patches around <c>Dec.Parser.Finish()</c> (the game's single def-load call).
+            
+             FinishPrefix TAKES OVER the load: it validates each mod in isolation, then does one clean parse of
+             base + good mods (each its own module) via <see cref="M:AshForge.ModLoader.ModValidator.LoadFinal(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})"/>, and returns false
+             to SKIP the game's own Finish. This both isolates bad mods and avoids the dec world-state corruption
+             that occurs if the game's parser finishes after our validation cleared the database.
+            
+             FinishPostfix runs after the (skipped) game Finish and asserts the spike def reached the live
+             Dec.Database. Everything is reflection so we never bind to dec.dll at compile time.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DecPatch.FinishPrefix">
+            <returns>false to skip the game's original Finish (we've already loaded), true to let it run.</returns>
+        </member>
+        <member name="T:AshForge.ModLoader.DevCommand">
+            <summary>One developer command contributed by a mod — pure data plus an <see cref="P:AshForge.ModLoader.DevCommand.Action"/>.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevCommand.ModId">
+            <summary>The owning mod's id (so faults from <see cref="P:AshForge.ModLoader.DevCommand.Action"/> are attributed correctly).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevCommand.Category">
+            <summary>Group header in the console (usually the mod's display name).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevCommand.Label">
+            <summary>Button text.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevCommand.Action">
+            <summary>What running the command does.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevCommand.PlayerSafe">
+             <summary>Safe to put in a PLAYER's hands. Default false: a command is dev-only unless it says otherwise.
+            
+             Player-safe means a support tool a player could reasonably need and can't hurt themselves with — "unstick
+             the traders loitering in my colony", not "give me 5000 credits" and not "load the render scaffold". The
+             console shows a player only these; in a dev session it shows everything.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.DevConsole">
+             <summary>
+             The suite-wide developer console registry. Any mod contributes buttons via
+             <see cref="M:AshForge.ModLoader.ModContext.AddDevCommand(System.String,System.Action)"/>; a dev-only console mod (AshDevConsole)
+             reads <see cref="P:AshForge.ModLoader.DevConsole.Commands"/>, draws them as buttons, and runs the chosen one through <see cref="M:AshForge.ModLoader.DevConsole.Invoke(AshForge.ModLoader.DevCommand)"/>.
+            
+             THE WHOLE POINT: a registered command is inert DATA — it does nothing until a console UI invokes it. So a
+             shipped mod can leave its dev commands in permanently, with no "remember to strip the dev hotkey before
+             publishing" step (the footgun that once shipped a raid-spawning key to players).
+            
+             ★ The console mod IS now published, so "no console in a player's install" is no longer what keeps dev tooling
+             out of their hands. Two ideas that used to be one must therefore stay firmly apart:
+            
+               • <see cref="P:AshForge.ModLoader.DevConsole.Enabled"/> — are we in a DEV SESSION? Driven ONLY by an explicit developer opt-in, never by the
+                 console being installed. Mods gate dev-only machinery on this (the world map hangs its render scaffold and
+                 perf HUD off it), so if console-presence still implied dev mode, publishing the console would have quietly
+                 switched the scaffold on in every player's game.
+            
+               • <see cref="P:AshForge.ModLoader.DevConsole.ConsolePresent"/> — is a console UI available to render commands? True for players too, now.
+            
+             What a player is allowed to SEE is a third thing again: <see cref="P:AshForge.ModLoader.DevConsole.VisibleCommands"/>, which hands a player
+             only the commands explicitly marked <see cref="P:AshForge.ModLoader.DevCommand.PlayerSafe"/>.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevConsole.ConsolePresent">
+            <summary>Whether a console UI is loaded. NOT a statement about dev mode — the console ships to players.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevConsole.Enabled">
+             <summary>Are we in a DEV SESSION? Mods check this to skip building dev-only state entirely.
+            
+             ★ Deliberately NOT influenced by whether the console mod is installed. Opt-in only: env ASHFORGE_DEV=1, the
+             unsigned-mods dev override, or a marker file. A player's install has none of these, so this is false for
+             them even though they now have the console.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DevConsole.MarkConsolePresent">
+            <summary>Called by the console mod when it loads. Records that a console UI exists — it does NOT turn dev
+            mode on (see the note on <see cref="P:AshForge.ModLoader.DevConsole.Enabled"/>; it used to, and that would now leak dev tooling to players).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DevConsole.Register(System.String,System.String,System.String,System.Action)">
+            <summary>Contribute a DEV-ONLY command — never shown to players. Inert data until a console surfaces it,
+            and order-independent (it never matters whether the console loaded first).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DevConsole.Register(System.String,System.String,System.String,System.Action,System.Boolean)">
+            <summary>Contribute a command, saying whether a PLAYER may see it. Default is dev-only; opting in is a
+            deliberate act (see <see cref="P:AshForge.ModLoader.DevCommand.PlayerSafe"/>).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevConsole.Commands">
+            <summary>Every command, dev-only ones included. For a console that has already decided it's in a dev
+            session — otherwise use <see cref="P:AshForge.ModLoader.DevConsole.VisibleCommands"/>.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.DevConsole.VisibleCommands">
+            <summary>★ What this session's user may actually see: everything in a dev session, and ONLY the
+            player-safe commands otherwise. A console UI should render THIS, not <see cref="P:AshForge.ModLoader.DevConsole.Commands"/>.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.DevConsole.Invoke(AshForge.ModLoader.DevCommand)">
+            <summary>Run a command through the fault firewall, attributed to its owning mod (a throwing dev
+            command can never take the game down or escape its mod's fault budget).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Entry">
+             <summary>
+             Injected entry point for Approach B (assembly patch). The patcher inserts a single call to
+             <see cref="M:AshForge.ModLoader.Entry.Bootstrap"/> at the top of the game's <c>Ascent.Engine.GameRoot._Ready()</c>. By the
+             time it runs, the game assembly is loaded and we are inside the game's own AssemblyLoadContext, so
+             resolving AshLoader/Harmony from the game's data folder works.
+            
+             All heavy lifting stays in <see cref="T:AshForge.ModLoader.ModLoaderCore"/>, so the on-disk patch never has to change —
+             only AshLoader.dll is updated to change loader behaviour.
+             </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.GameEmitPoints">
+             <summary>
+             AshForge's own Harmony emit points — the layer that actually touches the game. The bus's emit points
+             ARE Harmony patches against the game; the loader owns Harmony, so it owns them (a mod never patches
+             the game for a catalogued event — it subscribes). This is the "AshForge patches once, N mods subscribe"
+             win: instead of every behavior mod postfixing the same input-update method, AshForge patches it once and
+             republishes it as <see cref="!:BusEvents.GameTick"/>.
+            
+             All game interop is reflection (no compile-time reference to the game assembly) so a game update can't
+             break the loader build; a missing/renamed method just means that emit point doesn't install (logged),
+             never a crash.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.GameEmitPoints.FindGameAsm(System.String)">
+            <summary>Resolve the game assembly by probing for a known type across loaded assemblies.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.GameEmitPoints.InstallDestinationDiscovered(HarmonyLib.Harmony)">
+            <summary>
+            Cold emit point for the World Map's discovery feed: postfix <c>ExpeditionManager.AddDestination</c> —
+            the single chokepoint every newly-discovered location flows through (the visitor lead, dev spawns,
+            anything) — and republish it as <see cref="F:AshForge.ModLoader.BusEvents.DestinationDiscovered"/>. AshForge patches it
+            once; the map mod just subscribes.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.GameEmitPoints.MouseModeUpdatePostfix(System.Object)">
+            <summary>Postfix on MouseMode.Update — republishes the per-frame tick to the hot GameTick channel.
+            Allocates nothing when no mod is subscribed (the common case), and the GameTickData payload is a
+            struct, so even with subscribers the per-frame hot path makes no heap allocation.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.GameEmitPoints.AddDestinationPostfix(System.Object)">
+            <summary>Postfix on ExpeditionManager.AddDestination(DestinationDec) — <paramref name="__0"/> is the
+            just-added dec. Pulls Label/Description off it (the loader has reflection access; subscribers get
+            them ready-made) and republishes on the cold bus. No work at all when nobody's subscribed.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.GameEmitPoints.InstallExpeditionStarted(HarmonyLib.Harmony)">
+            <summary>
+            Cold emit point: postfix <c>ExpeditionManager.StartExpedition(Expedition)</c> — the single chokepoint
+            every expedition launch passes through (World Map or the game's own menu) — and republish the
+            destination's dec as <see cref="F:AshForge.ModLoader.BusEvents.ExpeditionStarted"/> so subscribers can mark it visited.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.GameEmitPoints.StartExpeditionPostfix(System.Object)">
+            <summary>Postfix on ExpeditionManager.StartExpedition(Expedition) — <paramref name="__0"/> is the
+            expedition. Pull its Destination.Dec and republish on the cold bus.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.IAshForgeMod">
+             <summary>
+             Optional entry point for a code (behavior) mod. A mod ships a DLL under
+             <c>mods/&lt;id&gt;/Assemblies/</c> that references AshLoader and implements this; the loader loads
+             the assembly before the def parse (so any custom Dec/Props types it declares resolve) and calls
+             <see cref="M:AshForge.ModLoader.IAshForgeMod.Init"/> once. From here a mod can apply its own Harmony patches, register services, etc.
+             Implementing this is optional — an assembly that only adds custom Dec/Props types needs nothing.
+            
+             New bus-native mods should prefer <see cref="T:AshForge.ModLoader.IAshForgeModContext"/> instead, which hands the mod its
+             id and a bus handle so it can subscribe/publish without re-deriving its own identity.
+             </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.IAshForgeModContext">
+            <summary>
+            Context-aware entry point — the blessed path for bus-native behavior mods. The loader prefers this
+            over <see cref="T:AshForge.ModLoader.IAshForgeMod"/> when a type implements both. The <see cref="T:AshForge.ModLoader.ModContext"/> carries the
+            mod's id (so its bus faults are attributed correctly) and bus convenience wrappers.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModContext">
+            <summary>
+            Per-mod handle the loader passes to <see cref="M:AshForge.ModLoader.IAshForgeModContext.Init(AshForge.ModLoader.ModContext)"/>. Subscriptions made through
+            it are auto-attributed to this mod's id (the bus needs the id to route faults and respect the
+            disabled-set), so a mod never has to repeat its own id string.
+            </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModContext.ModId">
+            <summary>This mod's id (its folder name, or the <c>id</c> from its mod.json).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModContext.LoadOrder">
+            <summary>This mod's load order — the deterministic tiebreaker when two providers register equal
+            broker priority for the same capability.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.Subscribe(System.String,System.Action{AshForge.ModLoader.BusEvent})">
+            <summary>Subscribe to a cold (string-keyed) bus event; the handler's faults are attributed to this mod.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.Emit(System.String,System.Object)">
+            <summary>Publish a cold bus event. (Notification-only for now — fire-and-forget.)</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.OnGameTick(System.Action{AshForge.ModLoader.GameTickData})">
+            <summary>Subscribe to the hot per-frame <see cref="F:AshForge.ModLoader.Bus.GameTick"/> channel (allocation-free dispatch).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.ScheduleEvery(System.Int32,System.Action)">
+            <summary>
+            Register periodic work that runs every <paramref name="intervalTicks"/> ticks, hash-staggered so it
+            doesn't share a frame with other mods' periodic work (prefer this over polling every GameTick for
+            anything that doesn't need per-frame precision). Returns a handle for <see cref="M:AshForge.ModLoader.ModScheduler.Unschedule(System.Object)"/>.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.RegisterSaveData(System.Int32,System.Func{System.String},System.Action{AshForge.ModLoader.ModSaveLoad})">
+            <summary>
+            Attach this mod's own state to the game save (one blob per mod). On save, <paramref name="save"/> is
+            called to produce a blob string (serialize however you like — JSON, CSV, whatever); on load,
+            <paramref name="load"/> receives the stored blob, the version it was written with (migrate from older
+            versions here), and whether one existed at all (<c>Existed=false</c> ⇒ reset to defaults). The blob
+            rides in a sidecar next to the save file, never inside it — see <see cref="T:AshForge.ModLoader.ModSaveData"/>.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.RegisterSaveData(System.String,System.Int32,System.Func{System.String},System.Action{AshForge.ModLoader.ModSaveLoad})">
+            <summary>As <see cref="M:AshForge.ModLoader.ModContext.RegisterSaveData(System.Int32,System.Func{System.String},System.Action{AshForge.ModLoader.ModSaveLoad})"/> but with an explicit
+            <paramref name="key"/>, for a mod that wants several independently-versioned blobs.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.AddDevCommand(System.String,System.Action)">
+             <summary>
+             Contribute a DEVELOPER command — a labelled button in the suite-wide console (see <see cref="T:AshForge.ModLoader.DevConsole"/>),
+             grouped under this mod's id. Shown only in a dev session; a player never sees it, so it's safe to leave in a
+             shipped mod with no strip-before-publish step. Use for force-triggers, state dumps, and test fixtures you'd
+             otherwise wire to a throwaway hotkey.
+            
+             For something a PLAYER should be able to reach, use <see cref="M:AshForge.ModLoader.ModContext.AddPlayerCommand(System.String,System.String,System.Action)"/> instead.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.AddDevCommand(System.String,System.String,System.Action)">
+            <summary>As <see cref="M:AshForge.ModLoader.ModContext.AddDevCommand(System.String,System.Action)"/> but with an explicit <paramref name="category"/>
+            group header (e.g. to split a mod's commands into sections).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.AddPlayerCommand(System.String,System.String,System.Action)">
+             <summary>
+             Contribute a PLAYER-FACING support command — visible in the console in a normal player install.
+            
+             This is the ship-a-fix-without-shipping-a-build lever: an escape hatch a player can pull when something in
+             this mod has left their colony in a bad state ("send the traders who won't leave home"), so small breakages
+             can be batched into the next release instead of forcing an emergency one.
+            
+             The bar is high, and the default (<see cref="M:AshForge.ModLoader.ModContext.AddDevCommand(System.String,System.Action)"/>) is the safe one. A player command must be
+             something a player could plausibly need and cannot hurt themselves with. Cheats (free credits, free
+             reputation), scaffolding, perf harnesses, and force-spawns are NOT player-safe — those stay dev-only.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.AddToggle(System.String,System.String,System.Boolean,System.String,System.Action)">
+            <summary>An on/off knob. <paramref name="key"/> is stable storage id (renaming it resets the setting);
+            <paramref name="label"/> is what the player reads.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.AddSlider(System.String,System.String,System.Double,System.Double,System.Double,System.Boolean,System.String,System.Action)">
+            <summary>A number in a range. Set <paramref name="integral"/> for a whole-number knob (counts, days).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.AddChoice(System.String,System.String,System.String[],System.Int32,System.String,System.Action)">
+            <summary>One of a fixed list of options. The stored value is the chosen INDEX, so you can reword an option
+            without resetting players' choices — but reordering the list WILL change what they've picked.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.Query``1(AshForge.ModLoader.CapabilityId)">
+            <summary>
+            Query a shared capability at a fixed version. Never throws for a registered capability — falls through
+            to the loader default, so this is safe to call whether or not the providing mod is installed
+            (standalone-first). Use the ids in <see cref="T:AshForge.ModLoader.Capabilities"/>.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.TryQuery``1(AshForge.ModLoader.CapabilityRequest,``0@,System.Int32@)">
+            <summary>
+            Version-negotiated query: resolves the highest version in <paramref name="request"/>'s range. Returns
+            false if nothing in range can answer — the signal to run your OWN standalone fallback path.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.RegisterProvider``1(AshForge.ModLoader.ICapabilityProvider{``0})">
+            <summary>Register a provider for a capability. Attributed to this mod; the mod's load order is the
+            equal-priority tiebreaker. The capability must already be defined (the loader defines the official
+            catalog; a third-party contract is registered via <see cref="M:AshForge.ModLoader.ModContext.RegisterCapability``1(AshForge.ModLoader.CapabilityDefinition{``0})"/>).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.RegisterCapability``1(AshForge.ModLoader.CapabilityDefinition{``0})">
+            <summary>Register a THIRD-PARTY (<c>author.mod.*</c>) capability definition. First-party
+            <c>ashforge.*</c> contracts are loader-owned — a mod registers providers for those, not definitions.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.OnCapabilityChanged(AshForge.ModLoader.CapabilityId,System.Action)">
+            <summary>Subscribe to a capability's change notifications (fires only when the resolved value actually
+            differs). Handler faults are attributed to this mod. Dispose the token to unsubscribe.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModContext.InvalidateCapability(AshForge.ModLoader.CapabilityId)">
+            <summary>Tell the broker a capability you PROVIDE has changed underneath it (recompute is deferred to
+            the tick-spreading scheduler; OnChanged fires only if the value really changed).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModSaveLoad">
+            <summary>
+            What a mod's save-data load callback receives. <see cref="F:AshForge.ModLoader.ModSaveLoad.Existed"/> distinguishes "had a saved blob"
+            from "fresh / no prior data" so a mod can reset cleanly; <see cref="F:AshForge.ModLoader.ModSaveLoad.Version"/> is the blob's stored
+            version (the migration hook — compare against your current version and upgrade the data shape).
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSaveLoad.Data">
+            <summary>The stored blob, or null if none existed for this mod in the save's sidecar.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSaveLoad.Version">
+            <summary>The version the stored blob was written with (0 if none). Migrate from older versions.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSaveLoad.Existed">
+            <summary>True if this mod had a saved blob in the loaded save; false on a fresh/absent one.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModCache">
+             <summary>
+             Validation cache. Validation is the slow part of startup (a full base-game re-parse), but its result
+             only changes when the game, the set of enabled mods, or a mod's content changes. We fingerprint all
+             of that; on an unchanged launch we reuse the previous good-mod set and skip validation entirely.
+            
+             Stored as two lines next to the mods folder: line 1 = fingerprint, line 2 = comma-separated good ids.
+             Hashing is metadata-only (size + mtime) so it's cheap; any read error just yields a different
+             fingerprint, which safely forces a re-validation.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCache.Fingerprint(System.String,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+            <summary>Stable fingerprint of game + enabled mods (ids, order, content).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCache.Lookup(System.String,System.String)">
+            <summary>Returns the cached good-mod ids if the fingerprint matches, else null.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModCapabilityManifest">
+            <summary>
+            A mod's declared broker relationships, parsed from the <c>capabilities</c> block of its <c>mod.json</c>.
+            Declarations let the loader and Hub reason about cross-mod wiring WITHOUT loading code — they drive the
+            Hub's "works better with" recommendations and the declared-vs-registered reconciliation (LOADER-BROKER-001
+            §10.1). Declarations are advisory metadata: they never gate loading, and a mismatch with what actually
+            registers at runtime is itself a surfaced diagnostic, not a failure.
+            </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModCapabilityManifest.Provides">
+            <summary>Capabilities this mod declares it PROVIDES (exclusive winner).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModCapabilityManifest.Contributes">
+            <summary>Aggregate capabilities this mod declares it CONTRIBUTES to (also a provider registration).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModCapabilityManifest.ConsumesFamilies">
+            <summary>Capability families (ns.name) this mod declares it CONSUMES or CONTRIBUTES to.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModCapabilityManifest.ProducesFamilies">
+            <summary>Families this mod PRODUCES (provides ∪ contributes) — the match set for "better with".</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModCapabilityManifest.Publishes">
+            <summary>Bus events this mod declares it PUBLISHES.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModCapabilityManifest.Subscribes">
+            <summary>Bus events this mod declares it SUBSCRIBES to.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityManifest.FamilyOf(System.String)">
+            <summary>Family key ("ns.name") from a "ns.name@ver" or "ns.name@min..max" declaration.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.BetterWith">
+            <summary>A Hub-facing "works better with" recommendation — one mod's needs met by another's outputs.
+            ALWAYS a recommendation, NEVER a requirement (LOADER-BROKER-001 invariant #1).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModCapabilityRegistry">
+            <summary>
+            Loader-owned registry of every mod's capability manifest + the tooling that reasons over them:
+            the "better with" graph (from provides/publishes ↔ consumes/subscribes overlap) and declared-vs-registered
+            reconciliation. This is the data source the Hub Resolution Panel's static view reads (HUB-RESOLUTION-001).
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.Parse(System.String,System.String)">
+            <summary>
+            Parse a mod's <c>capabilities</c> block from its raw <c>mod.json</c> text. Tolerant: a missing block,
+            bad JSON, or an unknown field is ignored (declarations are optional and never gate loading). Returns
+            null if there's no capabilities block to record.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.ComputeBetterWith">
+            <summary>
+            Compute "works better with" recommendations from the declared graph: mod B works better with mod A
+            when B consumes a family A produces, or B subscribes to an event A publishes. These are surfaced by
+            the Hub as recommendations — NEVER as hard dependency edges.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.Reconcile(AshForge.ModLoader.WorldStateBroker)">
+            <summary>
+            Reconcile declarations against what actually registered at runtime — both directions:
+            (1) DECLARED-NOT-REGISTERED: a mod's manifest declares it provides X but no matching provider is live
+                (a load fault hint — HUB-RESOLUTION-001 §8).
+            (2) REGISTERED-NOT-DECLARED: a mod registered a provider its manifest omits (breaks the "better with"
+                graph — the review's finding #7). Returns human-readable diagnostic lines.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.ConsumersOf(System.String)">
+            <summary>Mod ids that declare they CONSUME a capability family ("ns.name"). For the Panel's consumer list.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.PublishersOf(System.String)">
+            <summary>Mod ids that declare they PUBLISH an event. For the Panel's events view.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.SubscribersOf(System.String)">
+            <summary>Mod ids that declare they SUBSCRIBE to an event. For the Panel's events view.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.AllEvents">
+            <summary>Every event name mentioned by any mod (published or subscribed) — the events view's rows.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModCapabilityRegistry.LogSummary(AshForge.ModLoader.WorldStateBroker)">
+            <summary>Emit the "better with" graph + reconciliation diagnostics to the log. Called once after all
+            mods have initialised (their providers are registered by then).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModFault">
+             <summary>
+             The single, invocation-agnostic mod-fault policy for the whole loader.
+            
+             This is deliberately NOT tied to how mod code was reached (a Harmony patch, a bus subscriber, a
+             lifecycle hook, a scheduled tick, …). It only knows: a fault was attributed to mod X — log it, count
+             it, disable X past a threshold, and expose the disabled-set. Every execution surface in AshForge
+             routes its faults here so attribution and the disabled-state stay single-sourced (two half-overlapping
+             isolation systems would let a mod disabled on one path keep firing on another — invisible at 5 mods,
+             a support nightmare at 500).
+            
+             THE INVARIANT (document it loudly, never route around it): no subsystem in AshForge ever calls mod
+             code directly — only ever through <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/>. Each new surface that obeys this inherits
+             isolation / attribution / disable-respect by construction, and isolation code is never written again.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModFault.DisableThreshold">
+            <summary>Consecutive… well, cumulative faults a mod may accrue before it is auto-disabled.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModFault.DisabledMods">
+            <summary>The mods currently auto-disabled by the fault policy (snapshot copy; safe to enumerate).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModFault.CoreId">
+             <summary>
+             The reserved id for LOADER-OWN code (the broker's capability default floor, its validators, scalar
+             selectors and compose functions all run under it).
+            
+             ★ IT CAN NEVER BE DISABLED. Fault counts are cumulative per id with a threshold of
+             <see cref="F:AshForge.ModLoader.ModFault.DisableThreshold"/>, and <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/> early-outs on a
+             disabled id. So without this exemption, five cumulative loader-side faults — across ANY capability's
+             default/validate/scalar/compose — would auto-disable "ashforge.loader", after which every capability's
+             default floor silently stops running and yields <c>default(T)</c> (i.e. <c>null</c> for the reference
+             payloads). That would break the broker's load-bearing "a Query NEVER fails" invariant, silently, forever,
+             with no provider at fault. The floor is not a mod: it is the guarantee everything else falls back to.
+             Faults here are still counted and LOGGED loudly — they just never gate the floor.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModFault.IsDisabled(System.String)">
+            <summary>Read side — has this mod been auto-disabled? Cheap; call before dispatching to it.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModFault.FaultCount(System.String)">
+            <summary>Fault count accrued so far for a mod (0 if unknown). Mostly for inspection / tests.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModFault.ReportFault(System.String,System.Exception,System.String)">
+            <summary>
+            Record a fault attributed to <paramref name="modId"/>: log it, increment its count, and disable
+            the mod once it crosses <see cref="F:AshForge.ModLoader.ModFault.DisableThreshold"/>. Never throws — policy must not itself fault.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModFault.Disable(System.String,System.String)">
+            <summary>
+            Hard-disable a mod immediately, regardless of fault count — for a decision made elsewhere (e.g. the
+            def validator dropped it for a bad parse or a conflict). This is the unification point: validation
+            and the bus share ONE disabled-set, so a mod disabled by one path can never keep firing on another.
+            Idempotent; never throws.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)">
+            <summary>
+            The one primitive every execution surface uses to run mod code. Skips disabled mods, runs
+            <paramref name="action"/> in a try/catch, and routes any exception to <see cref="M:AshForge.ModLoader.ModFault.ReportFault(System.String,System.Exception,System.String)"/>.
+            Returns true if the action ran to completion, false if it was skipped (disabled) or faulted.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModFault.SafeInvoke``1(System.String,System.Action{``0},``0,System.String)">
+            <summary>
+            Allocation-free overload for hot paths: runs <paramref name="handler"/>(<paramref name="arg"/>)
+            without a capturing closure (which the <see cref="T:System.Action"/> overload forces a publisher to allocate
+            per call). Same isolation / attribution / perf-timing as the non-generic form.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModFault.Reset">
+            <summary>Clear all fault state (tests / a future "re-enable mods" action). Not used in normal play.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModInfo">
+            <summary>A discovered mod: a folder with (optionally) a Decs/ subtree and a mod.json manifest.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModInfo.IdentitySealed">
+            <summary>The id came from INSIDE a verified signature envelope — i.e. the signature checked out AND the
+            signed manifest declared an id. False for an unsigned mod, and for a legacy signed mod whose manifest
+            predates sealed identity (its id still comes from the attacker-editable mod.json).
+            ★ This is the only identity claim the loader is entitled to act on for a SECURITY decision.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModLoaderCore">
+             <summary>
+             The loader proper. Discovers mods, then Harmony-patches dec's <c>Parser.Finish()</c> so each mod's
+             Decs/ folder is fed into the SAME parser the game uses — meaning mod defs cross-reference base-game
+             defs (parents, ammo, etc.) for free, and dec's built-in patch operators just work.
+            
+             All reflection against dec is intentional: we never reference dec.dll at compile time, so there is
+             no assembly-identity clash with the copy the game loads, and a dec version bump won't break the build.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModLoaderCore.IsSealedFirstParty(System.String)">
+             <summary>
+             May this mod DEFINE contracts in the reserved <c>ashforge.*</c> capability family?
+            
+             Only if BOTH hold: its identity came from inside a verified signature envelope, and that SEALED id is
+             itself <c>ashforge.*</c>.
+            
+             ★★ BEING ASHFORGE-SIGNED IS NOT ENOUGH, and that is the whole subtlety. We also sign VETTED THIRD-PARTY
+             mods — the signature attests that these are the exact bytes AshForge reviewed and published, which is
+             provenance, not authorship. Authorship lives in the sealed id, because that is the one identity claim an
+             attacker cannot edit after signing (mod.json is deliberately outside the signature, since the Mod
+             Manager rewrites it on enable/reorder).
+            
+             ★ An ambiguous id (two mods claiming it) proves nothing, so it grants nothing.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModLoaderCore.ApplySignedIdentity(AshForge.ModLoader.ModInfo,AshForge.ModLoader.ModSignature.SignedDeclaration)">
+            <summary>
+            Overwrite the mod's identity with what the SIGNED manifest declares. A disagreement means mod.json
+            was edited after signing, so the signed value wins and the swap is named in the log rather than
+            happening silently. Deliberately not a rejection: mod.json is legitimately rewritten by the Mod
+            Manager, and turning an edit of an unsigned file into a hard failure would break loading for a
+            player who did nothing wrong. The security win is that the value the loader USES is now the signed
+            one. (To harden this into a refusal, treat a mismatch the same as a failed Verify above.)
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModLoaderCore.LoadModAssemblies">
+            <summary>
+            Load each enabled mod's code assemblies (mods/&lt;id&gt;/Assemblies/*.dll) before the def parse,
+            so custom Dec/Props types resolve and behavior mods can hook in. Loaded into the GAME's own
+            AssemblyLoadContext (the same one this loader runs in) — NOT the Default context — so that a
+            mod referencing the game/Godot/dec assemblies binds to the live, already-loaded copies instead
+            of triggering a duplicate load from disk (which would give Harmony patches a dead second copy
+            to patch, and make dec report "Too many types found"). Failures are isolated per mod.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModPerf">
+             <summary>
+             Per-mod performance attribution — the same <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/> chokepoint that gives
+             isolation gives timing for free, so the platform can name the mod that adds stutter ("Mod X is eating
+             6 ms/frame in OnTick"). Uses <see cref="M:System.Diagnostics.Stopwatch.GetTimestamp"/> deltas (no allocation), and is
+             toggleable so the measurement isn't itself a cost in a shipping build.
+            
+             This is the measure-and-flag half; an actual frame-budget throttle (skip an over-budget mod, the perf
+             analog of auto-disable) is a later beat — the stats + the slow-invocation flag are what's needed first.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModPerf.Enabled">
+            <summary>Master toggle. Off = SafeInvoke skips all timing (true zero overhead in shipping builds).</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModPerf.SlowInvocationWarnMs">
+            <summary>A single invocation slower than this (ms) is flagged once per (mod,context). 0 disables flagging.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModPerf.Record(System.String,System.String,System.Int64)">
+            <summary>Record one timed invocation. Called from SafeInvoke's finally; never throws.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModPerf.Snapshot">
+            <summary>Per-(mod,context) stats, busiest first. Snapshot copy — safe to enumerate.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModPerf.LogReport(System.Int32)">
+            <summary>Dump the top offenders to the log (for a console command / overlay later).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModSaveData">
+             <summary>
+             Mod save-data attachment — a standard way for a mod to attach its own blob to the game's save and get
+             it back on load, with a version for migration. The persistence dependency every *stateful* mod needs
+             (the World Map's node state is its first consumer); built before that mod, not before all mods.
+            
+             DESIGN — sidecar, not injection. AoA saves are a single dec-<c>Recorder</c> XML document written by the
+             game. AshForge does NOT splice mod data into that document (that would couple every mod to dec's format
+             and risk corrupting the base save). Instead each save file <c>user://saves/&lt;name&gt;.xml</c> gets a
+             parallel sidecar <c>&lt;name&gt;.xml.ashforge</c> holding all mods' blobs. The sidecar is independent:
+             it can't break the game save, it survives game updates, and a missing/corrupt sidecar just means mods
+             load with no prior state.
+            
+             LIFECYCLE (driven by <see cref="T:AshForge.ModLoader.SaveDataHooks"/>):
+               save  → <see cref="M:AshForge.ModLoader.ModSaveData.WriteSidecar(System.String)"/>  (postfix SaveMenu.StartSaveToFile)
+               load  → <see cref="M:AshForge.ModLoader.ModSaveData.Stage(System.String)"/>          (postfix SaveMenu.StartLoadFromFile — read sidecar off disk)
+                     → <see cref="M:AshForge.ModLoader.ModSaveData.DispatchPending"/> (postfix World.ActivateMap — hand each mod its blob exactly when
+                                                      the loaded world goes live, so a handler may touch World.Active)
+            
+             Every provider callback runs through <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/> (THE INVARIANT) — a mod that
+             throws while saving or loading is isolated and attributed, and never breaks the save, the load, or
+             another mod's data.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSaveData.SidecarFormat">
+            <summary>Envelope format version — lets AshForge evolve the sidecar shape itself, independent of any
+            mod's own blob version.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSaveData.SidecarSuffix">
+            <summary>The extension appended to the game's save path for the parallel mod sidecar.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSaveData.ProviderCount">
+            <summary>Number of registered providers (inspection / tests).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSaveData.Register(System.String,System.String,System.Int32,System.Func{System.String},System.Action{AshForge.ModLoader.ModSaveLoad})">
+            <summary>
+            Register a mod's save-data provider. <paramref name="key"/> namespaces the blob inside the sidecar
+            (default it to the mod id — one blob per mod; pass distinct keys for several). <paramref name="save"/>
+            returns the blob to store (return null to store nothing); <paramref name="load"/> receives the stored
+            blob plus its version (for migration) and whether one existed. Re-registering the same key replaces.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSaveData.WriteSidecar(System.String)">
+            <summary>
+            Collect every provider's blob and write the sidecar next to <paramref name="saveFilePath"/>. Each
+            <c>Save()</c> runs through SafeInvoke, so a throwing provider is dropped (attributed) and the rest
+            still persist. No-op when no provider is registered (no sidecar is created for a vanilla load-out).
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSaveData.Stage(System.String)">
+            <summary>
+            Read the sidecar for <paramref name="saveFilePath"/> off disk and hold it until the loaded world goes
+            live (<see cref="M:AshForge.ModLoader.ModSaveData.DispatchPending"/>). Always arms a dispatch — even with no sidecar — so a mod gets a
+            load callback (with <c>Existed=false</c>) and can reset to defaults rather than keep stale state from
+            a previously-loaded game in the same session.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSaveData.DispatchPending">
+            <summary>
+            If a load staged data, hand each provider its blob (or <c>Existed=false</c> if it had none) and clear
+            the pending flag. Called from a World-activation postfix that fires for many reasons; the flag makes
+            it dispatch only after an actual load. Each <c>Load()</c> runs through SafeInvoke.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSaveData.Reset">
+            <summary>Drop all providers and any pending load (tests / clean reload). Not used in normal play.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModScheduler">
+             <summary>
+             Tick-spreading scheduler — "run this every N ticks," staggered by a per-mod hash so 100 mods don't all
+             do their periodic work on the same frame (the proven RimWorld <c>IsHashIntervalTick</c> pattern). Built
+             before ticking mods pile up, so they're born using it instead of each polling every single frame.
+            
+             It rides the hot <see cref="F:AshForge.ModLoader.Bus.GameTick"/> channel as its clock: AshForge subscribes once, advances a
+             tick counter, and dispatches each due job through <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/>
+             — so periodic work inherits isolation, fault attribution, and perf-timing like every other execution
+             surface (the one-chokepoint invariant).
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModScheduler.Initialize">
+            <summary>Subscribe the scheduler to the per-frame tick. Call once at startup, after the emit point.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModScheduler.ScheduleEvery(System.String,System.Int32,System.Action)">
+            <summary>
+            Register periodic work for <paramref name="modId"/>: <paramref name="work"/> runs every
+            <paramref name="intervalTicks"/> ticks, offset by a stable per-(mod,slot) hash so it doesn't land on
+            the same frame as other mods' periodic work. Returns a handle for <see cref="M:AshForge.ModLoader.ModScheduler.Unschedule(System.Object)"/>.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModScheduler.ScheduleOnce(System.String,System.Action)">
+            <summary>
+            Run <paramref name="work"/> ONCE on the next tick, off the caller's hot path (used by the broker to
+            defer a capability recompute out of an <c>Invalidate</c> so a heavy resolve never spikes the calling
+            frame). Coalescing is the caller's job; this just guarantees "not inline, on the next tick." Runs
+            through <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/> like every other execution surface.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.SettingKind">
+            <summary>What kind of control a setting draws as.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.SettingKind.Toggle">
+            <summary>On/off. <see cref="P:AshForge.ModLoader.ModSetting.Value"/> is a bool.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.SettingKind.Slider">
+            <summary>A number in a range. <see cref="P:AshForge.ModLoader.ModSetting.Value"/> is a double.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.SettingKind.Choice">
+            <summary>One of a fixed list. <see cref="P:AshForge.ModLoader.ModSetting.Value"/> is the selected index (int).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModSetting">
+            <summary>
+            One knob a mod exposes to the player, plus its current value. Registered once at mod init and then read
+            freely — a mod holds onto the handle it gets back and reads <see cref="P:AshForge.ModLoader.ModSetting.Value"/> whenever it needs it, so
+            there's no lookup-by-string in a hot path.
+            </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.Key">
+            <summary>Stable id, unique within the mod. This is what's written to disk — renaming it resets the setting.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.Label">
+            <summary>What the player reads.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.Tooltip">
+            <summary>Optional one-liner explaining what it does.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.Integral">
+            <summary>Whether the slider is conceptually a whole number (drawn and stored without a fraction).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.Value">
+            <summary>The live value. Reading is cheap; a mod should just read this each time rather than caching.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.OnChanged">
+            <summary>Called after the player confirms a change to THIS setting. Optional — most mods can just read
+            <see cref="P:AshForge.ModLoader.ModSetting.Value"/> when they need it. Faults are firewalled to the owning mod.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.Index">
+            <summary>Index of the chosen option.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSetting.Selected">
+            <summary>Text of the chosen option (empty if this isn't a choice).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModSettings">
+             <summary>
+             The suite-wide mod settings registry: mods declare knobs, a settings UI draws them, and the values persist to
+             a config file next to the mods folder.
+            
+             SAME SPLIT AS <see cref="T:AshForge.ModLoader.DevConsole"/>, and for the same reason: this half is pure data with no Godot or game
+             dependency, so it can live in the loader. The UI that draws it (the Mod Settings page hung off the game's ESC
+             menu) lives in a mod, which is what's allowed to touch Godot.
+            
+             ★ Settings are stored in their OWN file, never in the game save. A save must never contain a mod's types —
+             uninstall the mod and the save has to still load. It also means a player's preferences follow them across
+             colonies rather than being frozen into one.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSettings.UseFile(System.String)">
+            <summary>Where the values live. Set by the loader at startup (alongside the mods folder).</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSettings.Register(AshForge.ModLoader.ModSetting)">
+            <summary>Declare a knob. Returns the handle the mod reads its value from.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSettings.Settings">
+            <summary>Every registered setting.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSettings.RegisterModName(System.String,System.String)">
+            <summary>Called by the loader for every mod it initialises.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSettings.DisplayName(System.String)">
+            <summary>The mod's human name, falling back to its id if it never declared one.</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSettings.ModsWithSettings">
+            <summary>The mod ids that declared at least one setting, in registration order — the settings UI draws one
+            page per entry.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSettings.For(System.String)">
+            <summary>The settings belonging to one mod, in the order it declared them.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSettings.Apply(System.Collections.Generic.IDictionary{AshForge.ModLoader.ModSetting,System.Object})">
+            <summary>
+            Commit edited values (the settings UI works on a copy and calls this on Confirm, so Cancel is free).
+            Writes the file, then fires each changed setting's OnChanged through the fault firewall — a mod that
+            throws while reacting to a settings change can't take the game down with it.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSettings.ResetToDefaults(System.String)">
+            <summary>Put one mod's settings back to their defaults (the UI's per-page "Reset" affordance).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModSignature">
+             <summary>
+             Supply-chain gate. A mod folder is allowed to load ONLY if it carries an AshForge signature that
+               (1) verifies against the embedded public key,
+               (2) covers every file in the folder, unchanged (no tampering, nothing added),
+               (3) is not on the revocation blocklist.
+             This is what stops a stranger from shipping a backdoored mod through AshForge — the loader runs only
+             code AshForge reviewed and signed. The PRIVATE key never ships (it lives offline on an encrypted USB);
+             only the PUBLIC key below ships. Signing tooling + SOP live in the ashforge-security package.
+            
+             Dev override: set env ASHLOADER_ALLOW_UNSIGNED=1 to load unsigned mods (logs a loud warning). Off by
+             default — shipped builds must reject unsigned mods. First-party mods get signed too.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSignature.AllowSource">
+             <summary>
+             WHICH opt-in opened the gate, for the log and for crash reports. Empty while the gate is on.
+            
+             ★ WHY THIS EXISTS. Every unsigned admission used to be logged as the dev env override no matter what
+             actually opened the gate. Once the Hub toggle shipped to players, the common case became the FILE, so
+             the line was telling support that a developer set an environment variable when a player had clicked a
+             switch — two different problems with two different answers, reported identically. §5 asks that a bug
+             report be attributable without interrogating the reporter; a confidently wrong attribution is worse
+             than none, because nobody thinks to doubt it.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ModSignature.AllowUnsigned">
+            <summary>
+            True when the signature gate is OFF for this run. Resolution order — first match wins:
+              1. <c>ASHLOADER_ENFORCE_SIGNATURES=1</c> — force the gate ON and ignore everything below. The
+                 consumer-preview / QA environment sets this, because dev and consumer-preview share ONE patched
+                 game install: without it, flipping the toggle in the dev Hub would silently disarm the
+                 pre-publish QA gate. Same failure mode ASHFORGE_MODS_ROOT / ASHFORGE_GAME_DIR already guard.
+              2. <c>ASHLOADER_ALLOW_UNSIGNED=1</c> — the long-standing dev override (behaviour unchanged).
+              3. <c>ashloader.unsigned.txt</c> next to the loader — the Hub toggle.
+            ★★ FAILS CLOSED. Anything missing, unreadable or unparseable leaves verification ON. A bug in this
+            method must never be the thing that disarms supply-chain protection — the only way to reach "off" is
+            an explicit, readable, affirmative opt-in.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModSignature.SignedDeclaration">
+            <summary>
+            What a VERIFIED manifest declares about the mod itself. Only ever handed back when verification
+            succeeded, so every field here is covered by the signature — unlike the same fields in mod.json,
+            which anyone can edit after signing.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSignature.SignedDeclaration.Id">
+            <summary>Canonical mod id, or null when the manifest predates this field.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSignature.SignedDeclaration.Name">
+            <summary>Display name, or null when the manifest predates this field.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ModSignature.SignedDeclaration.Json">
+            <summary>The verified manifest text, so a capabilities block can be parsed from signed bytes.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSignature.Verify(System.String,System.String@)">
+            <summary>True iff <paramref name="modDir"/> is signed by AshForge, intact, and not revoked.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSignature.Verify(System.String,System.String@,AshForge.ModLoader.ModSignature.SignedDeclaration@)">
+             <summary>
+             As above, and additionally hands back what the signed manifest declares about the mod's own identity
+             (<paramref name="signed"/>, null unless verification succeeded).
+            
+             ★ Why this exists: the loader used to take a mod's id and name from mod.json, which is deliberately
+             NOT covered by the signature (the Mod Manager rewrites it on enable/reorder). So the identity a
+             signed mod presented — including the name shown to a player in the unverified-mods warning — was
+             attacker-editable after signing. A manifest that declares them moves identity inside the envelope.
+             Absent fields keep the old behaviour, so every already-signed mod still verifies unchanged.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModSignature.ReadDeclared(System.Text.Json.JsonElement,System.String)">
+            <summary>A declared string field, or null when absent/blank/not a string. Never throws — a manifest
+            that predates these fields is the normal case, not an error.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.Blocklist">
+            <summary>
+            The revocation kill switch. Reads <c>ashloader.blocklist.json</c> placed next to the loader (the Hub
+            keeps it current from R2). Fail-safe: a missing/unreadable blocklist means "no known revocations" — it
+            never blocks every mod, and never silently ignores a present list. Revoke by signing-<c>key_id</c>
+            (whole-key compromise) or by a build's manifest SHA-256 (one bad mod).
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ModValidator">
+             <summary>
+             Per-mod isolation, all via reflection against dec (no compile-time dep).
+            
+             1. <see cref="M:AshForge.ModLoader.ModValidator.InstallSafeHandlers(System.Reflection.Assembly)"/> — replaces dec's default error handlers (which RETHROW, so one
+                bad def crashes the whole load) with non-throwing, logging versions. Backstop: no mod can hard-
+                crash the def load.
+            
+             2. <see cref="M:AshForge.ModLoader.ModValidator.ValidateAndLoad(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})"/> — load base + every mod in ONE real parse and keep it if clean (no
+                throwaway pre-parse — see the method for why a discarded parse corrupts saves). Only when that load
+                errors does it bisect individual mods; bad mods are DISABLED + reported.
+            
+             3. <see cref="M:AshForge.ModLoader.ModValidator.LoadFinal(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})"/> — the loader does the REAL load itself: base game + every good mod, each
+                as its own <c>ParserModular.Module</c> in load order (so mods can patch/override base defs). The
+                Harmony prefix then SKIPS the game's own Finish, avoiding the dec world-state corruption that
+                happens if the game's parser finishes after our dry-runs cleared the database.
+            
+             We use <c>ParserModular</c> directly (not the <c>Parser</c> wrapper we patched), so none of this
+             re-enters our Harmony patch.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.ValidateAndLoad(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+             <summary>
+             Resolve the good mod set AND leave the live database loaded with exactly it, doing a SINGLE full
+             parse on the happy path.
+            
+             Why single-parse matters: every full parse runs the game's dec <c>PostLoad</c> side effects, and
+             some of those populate game-side caches with dec instances. If we parse once to *validate* and then
+             throw that away and parse again to *load*, a game cache can be left holding instances from the
+             discarded parse while the live database owns different ones — and dec serialises a reference whose
+             object ≠ the database's as <c>&lt;name&gt;_DELETED</c>, so a game saved that session won't re-load
+             (it crashes restoring the missing dec). So: attempt the REAL combined load (base + every mod) and,
+             if it's clean, keep it — no throwaway pre-parse, no stale instances. Only if the combined load
+             actually errors do we bisect individual mods (which re-parses); that path is rare (a genuinely
+             broken mod) and self-heals next launch once the validation cache makes the load a single clean parse.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.BisectAndResolve(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+             <summary>
+             Find the broken mods (the error path, only when the combined load failed), then resolve any conflicts
+             among the survivors.
+            
+             ★★ GROUP TESTING, NOT ONE-AT-A-TIME. This used to dry-run every mod individually — O(N) FULL dec parses,
+             each re-parsing the entire base game (540 decs), each ~1.1-1.5 s even at 3 mods and slower as the mod
+             count climbs. One bad mod among 500 meant ~500 parses: a load screen measured in TENS OF MINUTES.
+            
+             A parse tells us "does this SET contain a problem", so we can ask about a whole GROUP at once and halve:
+             if a group parses clean, every mod in it is exonerated in ONE parse. One bad mod in 500 now costs ~9
+             parses instead of 500, and k bad mods cost about k·log(N/k).
+            
+             ★ A group can also fail because two mods in it CONFLICT while each is fine alone. Then both halves come
+             back clean, we correctly blame nobody, and <see cref="M:AshForge.ModLoader.ModValidator.ResolveConflicts(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})"/> picks it up — which is exactly
+             where that case belongs.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.FindBroken(System.Collections.Generic.List{AshForge.ModLoader.ModInfo},System.Func{System.Collections.Generic.List{AshForge.ModLoader.ModInfo},System.Boolean},System.Collections.Generic.List{AshForge.ModLoader.ModInfo},System.Int32@,System.Boolean)">
+             <summary>
+             Halving group-test: ask one parse "is there a problem anywhere in this set?", and only split when the
+             answer is yes. A clean answer exonerates the whole group at once — that is where the saving comes from.
+            
+             Takes the parse as a PREDICATE rather than reaching for dec itself, so the search is exercisable without
+             a game: <c>tools/BisectTests</c> drives it with a fake and asserts the parse counts really are
+             logarithmic. The scaling claim should be measured, not argued.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.ResolveConflicts(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+            <summary>
+            If the individually-good mods still error when loaded together, there's a mod-vs-mod conflict.
+            Report duplicate decNames for clarity, then disable lowest-priority mods (highest load order
+            first) until the set loads cleanly.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.RunDryRun(System.Reflection.Assembly,System.Collections.Generic.IEnumerable{System.ValueTuple{System.String,System.String}})">
+            <summary>Isolated parse; returns the errors produced ([] = clean). Leaves the database empty.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.LoadFinal(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+            <summary>
+            Do the actual game load: base + every good mod, each its own module in load order. Populates the
+            live database and leaves it Finished. The caller skips the game's own Finish.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.LoadFinalCapturing(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+            <summary>
+            Like <see cref="M:AshForge.ModLoader.ModValidator.LoadFinal(System.Reflection.Assembly,System.String,System.Collections.Generic.List{AshForge.ModLoader.ModInfo})"/> but captures the dec errors raised during the parse instead of letting
+            them stand, and does NOT clear afterwards — it leaves the database live. Returns [] when the parse
+            was clean (so the caller can keep this load as the real one). A hard parse exception is caught and
+            reported as an error too, so the caller bisects rather than aborting the whole takeover.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ModValidator.ClearDatabase(System.Reflection.Assembly)">
+             <summary>
+             Clear the dec database AND put the game's own static dec caches back to their pristine contents.
+            
+             ★ The second half is not optional. `Dec.Database.Clear()` cannot reach a cache the GAME keeps on its own
+             types, and `HairStyleDec.PostLoad` APPENDS itself to two such lists. Clearing only the database and then
+             re-parsing leaves those lists holding a discarded generation of decs that new pawns are still handed —
+             and a pawn holding a dec that is not the database's serialises as "&lt;name&gt;_DELETED", which reads back as
+             null and kills the map on load. Every parse path routes through here, which is exactly why the restore
+             lives here rather than at the call sites. See <see cref="T:AshForge.ModLoader.DecCacheGuard"/>.
+             </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.OverridesLock">
+             <summary>
+             The override-store WRITE MUTEX. A single <c>ashloader.overrides.lock</c> file held with an exclusive handle
+             for the whole game process is a crash-safe liveness token: the OS drops the handle on exit OR crash, so there
+             is no stale-lock problem (unlike a PID file). While the game holds it, the Hub (or a second game instance)
+             cannot acquire it — that is how the Hub knows a live writer exists and stays read-only.
+            
+             ★ ACQUIRE BEFORE READ. <see cref="T:AshForge.ModLoader.ModLoaderCore"/> calls <see cref="M:AshForge.ModLoader.OverridesLock.Acquire(System.String)"/> BEFORE
+             <see cref="M:AshForge.ModLoader.CapabilityOverrides.Load(System.String)"/>, so in-memory == disk at the moment of ownership. If a Hub write landed
+             between a read and a late acquire, the loader's in-memory overrides would be stale and the in-game panel (the
+             live writer) would later atomic-swap stale-in-memory + live edits over the Hub's write.
+            
+             ★ FAIL-CLOSED. If the lock cannot be acquired (a second game instance, or a foreign holder past the budget),
+             the game boots WITHOUT write ownership: overrides are still read (share-safe) so resolution is correct, but
+             the in-game write surface is disabled (<see cref="P:AshForge.ModLoader.OverridesLock.Held"/> is false) — never fail-open into two live writers.
+             The lock is a SEPARATE file from overrides.json so readers' FileShare.Delete opens of the data file are never
+             blocked by the mutex.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.OverridesLock.Held">
+            <summary>True once the whole-run write lock is held. The in-game write surface must gate on this.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ProviderResolutionState">
+            <summary>
+            The state language of a provider in the resolution chain (HUB-RESOLUTION-001 §5). This is the shared
+            view model both surfaces of the Resolution Panel render — the Hub static view and the in-game live
+            overlay — plus the text report below. Keeping it one model means the two Godot UIs are just renderers.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ProviderRow">
+            <summary>One provider's row in a capability's resolution chain.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ProviderRow.Priority">
+            <summary>What the provider declared.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ProviderRow.EffectivePriority">
+            <summary>What resolution actually uses (differs when the user reordered).</summary>
+        </member>
+        <member name="P:AshForge.ModLoader.ProviderRow.Overridden">
+            <summary>
+            DERIVED, never stored: resolution is not using what the provider declared. Enable state is a separate
+            axis carried by <see cref="F:AshForge.ModLoader.ProviderRow.State"/>; "the store holds an entry" is a persistence fact that belongs to
+            <c>CapabilityOverrides</c>, not to a resolution snapshot. Don't fuse the three.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.CapabilityView">
+            <summary>The full resolution picture for one capability — the Panel's detail view (HUB §3.2).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.EventRow">
+            <summary>One event channel's wiring — the Panel's events view (HUB §3.3).</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.ResolutionSnapshot">
+            <summary>
+            A point-in-time snapshot of the whole broker: every capability's resolution chain + state, the event
+            wiring, the "better with" graph, and reconciliation diagnostics. Built from the broker's introspection
+            (<see cref="M:AshForge.ModLoader.WorldStateBroker.DescribeProviders(AshForge.ModLoader.CapabilityId)"/>, <see cref="M:AshForge.ModLoader.WorldStateBroker.TryGetResolution(AshForge.ModLoader.CapabilityId,System.String@,System.Boolean@)"/>) and
+            the manifest registry — the exact data both Panel surfaces need.
+            </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.ResolutionSnapshot.SaveNotices">
+            <summary>Provider-binding changes since the loaded save was written (spec §7). Informational, never blocking.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ResolutionSnapshot.Capture(AshForge.ModLoader.WorldStateBroker)">
+            <summary>Assemble a live snapshot from the broker + manifest registry.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.ResolutionSnapshot.Render">
+            <summary>Render the snapshot as the plain-text resolution report (mirrors the Panel's detail layout,
+            HUB §3.2). The Godot surfaces draw the same model graphically; this is the headless/dev-console view.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.SaveDataHooks">
+             <summary>
+             The Harmony patches that drive <see cref="T:AshForge.ModLoader.ModSaveData"/> off the game's real save/load path — so the mod
+             sidecar tracks the exact save file the player picked, and the load callback fires when the loaded world
+             is actually live. All game interop is reflection (no compile-time game reference); a missing/renamed
+             method just disables save-data attachment for that build (logged), never a crash. Each patch is
+             independent and non-fatal.
+            
+             Hook points (in <c>Ascent.UI.SaveMenu</c> / <c>Ascent.Worlds.World</c>):
+               StartSaveToFile(fileName) -> postfix -> WriteSidecar(GetSaveFilePath(fileName))
+               StartLoadFromFile(fileName) -> postfix -> Stage(GetSaveFilePath(fileName))
+               World.ActivateMap()        -> postfix -> DispatchPending()
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.SaveDataHooks.StartSavePostfix(System.String)">
+            <summary>Postfix SaveMenu.StartSaveToFile(string fileName, …) — __0 is the file name.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.SaveDataHooks.StartLoadPostfix(System.String)">
+            <summary>Postfix SaveMenu.StartLoadFromFile(string fileName, …) — __0 is the file name.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.SaveDataHooks.ActivateMapPostfix">
+            <summary>Postfix World.ActivateMap() — dispatches a staged load exactly when the world is live.</summary>
+        </member>
+        <member name="T:AshForge.ModLoader.TrustIndicator">
+             <summary>
+             The persistent in-game "unverified mods" indicator — the second of the two warning surfaces the unsigned-mod
+             trust design requires, and the one it calls the more important. The Hub's banner only exists while the player
+             is looking at the Hub; a patched game launches from Steam as often as from the Hub, so without this a player
+             who turned the gate off is never reminded again.
+            
+             ★★ WHY THIS LIVES IN THE LOADER AND NOT IN A MOD. Everywhere else we keep the split described in
+             <see cref="T:AshForge.ModLoader.ModSettings"/> — the loader holds pure data, a mod draws it, and only a mod touches Godot. This
+             deliberately breaks that line, and the reason is the threat model rather than convenience:
+            
+               • Nothing here survives a *loaded* malicious mod. An unsigned mod runs arbitrary code and Harmony in the
+                 game's own ALC; it can free this node or patch whatever drew it. Loader-drawn and mod-drawn are equally
+                 defeatable AFTER load. That is not the difference that matters.
+               • The difference is BEFORE load. A mod-drawn indicator is removable with a checkbox — the same Mod Manager
+                 the player is already in. The attack is then one extra sentence of social engineering ("and turn off the
+                 AshForge status mod"), which needs no malware and leaves no trace. Drawing it in the loader forces an
+                 attacker into active tamper, which is unambiguous malice and leaves evidence.
+            
+             So the rule is narrowed rather than discarded: a mod draws FEATURES; the loader draws the one control whose
+             whole value is that the thing it warns about cannot switch it off.
+            
+             ★ GODOT BY REFLECTION ONLY — never a compile reference. Four test projects consume AshLoader through a
+             ProjectReference, and the mod csprojs show the Linux build resolves the game via $(GameData); a hardcoded
+             GodotSharp HintPath here would flow into all of them and break the Linux loader build. This is also just the
+             loader's existing idiom: it never compile-references dec or the game assembly either. The ENTIRE Godot surface
+             is the handful of lookups in <see cref="!:Resolve"/> — one place to fix when Godot moves, one canary to fail.
+             Verified against GodotSharp 4.3.0.0.
+            
+             ★ HERMETIC. Pure Godot UI types, zero game types, no dec contact, no game node groups, no _Process. It renders
+             a snapshot the loader already computed and never queries live game state — so it cannot participate in the
+             class of static/dec corruption that has bitten this loader before (see <see cref="T:AshForge.ModLoader.DecCacheGuard"/>).
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.TrustIndicator.DevModeFlagName">
+             <summary>
+             The player-facing "developer mode" flag, written next to the loader by the Hub (Mod Manager ▸ Advanced).
+             Silences the on-screen unsigned warning for someone iterating on their own mod, who would otherwise be
+             warned about their own work on every launch — friction with no safety value, and the surest way to push a
+             modder into cracking the loader instead.
+            
+             ★★ DELIBERATELY NOT <see cref="P:AshForge.ModLoader.DevConsole.Enabled"/>, though it sits beside it. That flag gates dev
+             TOOLING — mods hang real machinery off it (the world map's render scaffold and perf HUD). Feeding it from
+             a player-facing switch would mean anyone who flipped this to quieten a warning also switched on dev
+             scaffolding in their game, which is exactly the leak the note on <see cref="P:AshForge.ModLoader.DevConsole.Enabled"/> exists
+             to prevent. Two audiences, two flags: a developer opts in via env/temp marker and gets both; a player
+             flipping the Hub switch gets silence and nothing else.
+            
+             ★ A FILE, next to the loader — not an env var and not %TEMP% — for the same reason the signature flag is:
+             a patched game launches from Steam as often as from the Hub, and %TEMP% gets cleared. Same fail-closed
+             discipline: missing, empty, unreadable or anything other than 1|true leaves the warning ON.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.TrustIndicator.Unsigned">
+            <summary>Unsigned mods admitted this session, in load order. Empty when everything is signed.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.TrustIndicator.Suppressed">
+            <summary>Dev session: visuals suppressed on purpose. The log record is still written.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.Prepare(System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+             <summary>
+             Decide whether unsigned mods may run, and put the indicator on screen if so.
+            
+             ★ ORDERING. Called after discovery and BEFORE <c>LoadModAssemblies</c>, so the go/no-go is made while no
+             untrusted code has run yet — an unsigned mod can never be the reason the check "passes". The visual attach
+             itself is deferred to the end of the frame (see below), which is after mod Init; that is unavoidable and
+             does not weaken the decision, only the pixels.
+             </summary>
+             <returns>false = fail closed: the caller must drop unsigned mods this session.</returns>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.DevModeFlagSet">
+            <summary>
+            Read the Hub-written developer-mode flag from beside the loader. FAILS CLOSED in every direction: any
+            problem reading it, any value that is not exactly 1|true, and the warning stays on screen. Not memoised —
+            this is read once per launch, and a stale memo is a worse failure than a second file read.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.ResolveRoot">
+            <summary>The scene tree's root <c>Window</c>, or null if the tree is not reachable.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.ForcedTier">
+             <summary>
+             QA affordance: force a degraded tier so the fallbacks can actually be OBSERVED in a real game.
+             <c>ASHLOADER_TRUST_FORCE_TIER=2</c> skips the badge to exercise the window-title marker;
+             <c>=3</c> skips both to exercise fail-closed (unsigned mods suspended, signed mods still running).
+            
+             ★ WHY THIS EXISTS. Tier 2 and tier 3 are the paths that matter when something has gone wrong, and they
+             are the paths hardest to reach on purpose — you would have to break Godot to see them. Unit tests reach
+             tier 3 only by running headless with GodotSharp absent, which is NOT the real case (Godot present, attach
+             failing). Shipping a fail-closed guarantee that has never once run in a real game, when its effect is to
+             REMOVE mods from a player's session, is not a guarantee — it is a hope.
+            
+             ★ Never set for players, same class as ASHLOADER_ALLOW_UNSIGNED, and it announces itself loudly in the log
+             so a support session can never mistake a forced tier for a real fault.
+             </summary>
+        </member>
+        <member name="F:AshForge.ModLoader.TrustIndicator.TooltipNameLimit">
+            <summary>How many mods the tooltip names before it stops and points at the log instead.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.TrustIndicator.FileHashLimit">
+            <summary>Per-mod cap on hashed files in the log record. Mods are never dropped, only a mod's file list.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.TooltipBody">
+            <summary>
+            ★ BOUNDED ON PURPOSE. Naming every mod is fine for the handful a normal install has, but someone running
+            hundreds of unsigned mods would get a tooltip taller than the screen — unreadable, and worse than useless
+            as a warning, because an unreadable list reads as noise and gets ignored. Past the limit the tooltip states
+            the count and sends them to the log, which holds the complete record with hashes.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.StyleBadge(System.Type,System.Type,System.Object,System.Object)">
+            <summary>Give the badge its own look so it inherits nothing from the game's theme.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.PlaceTopRight(System.Type,System.Object)">
+            <summary>
+            Anchor to the top-right and grow leftward, so the badge never moves as the mod count changes the width,
+            and never lands on the top-left corner Squad Select already uses.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.TrustIndicator.LogUnsignedInventory(System.Collections.Generic.List{AshForge.ModLoader.ModInfo})">
+            <summary>
+            Record exactly what ran unreviewed, with hashes, so a crash report is attributable without interrogating
+            the reporter. Hashes cover the same set the signature would have covered (Assemblies/ + Decs/) — the files
+            the loader executes or injects.
+            </summary>
+        </member>
+        <member name="T:AshForge.ModLoader.WorldStateBroker">
+             <summary>
+             The AshForge World-State Broker — CORE (lives in the loader, like <see cref="T:AshForge.ModLoader.Bus"/>), so official
+             capabilities exist before any mod registers a provider. It is the sibling of the event bus:
+             the bus carries "things that happened" (fire-and-forget); the broker answers "what is true right now"
+             (a query arbitrated to one value). See LOADER-BROKER-001.
+            
+             THE LOAD-BEARING INVARIANT — standalone is the floor: every registered capability has a loader
+             <c>Default</c> at priority 0, so <see cref="M:AshForge.ModLoader.WorldStateBroker.Query``1(AshForge.ModLoader.CapabilityId)"/> ALWAYS returns a valid value even with zero
+             providers installed. Installing more mods upgrades signal quality; it never gates function. A missing
+             or throwing provider degrades to the default, never to a crash.
+            
+             Every crossing into mod code (a provider's Provide, an aggregate Compose supplied by a mod, an
+             OnChanged handler) runs through <see cref="M:AshForge.ModLoader.ModFault.SafeInvoke(System.String,System.Action,System.String)"/> — inheriting
+             isolation, fault attribution, and the auto-disable circuit breaker for free (the loader's one-chokepoint
+             invariant). The broker persists NO gameplay state: providers own and persist their own data, so saves
+             stay portable across changes to the installed mod set.
+             </summary>
+        </member>
+        <member name="P:AshForge.ModLoader.WorldStateBroker.Instance">
+            <summary>The process-wide broker. One instance; static-friendly like <see cref="T:AshForge.ModLoader.Bus"/>.</summary>
+        </member>
+        <member name="F:AshForge.ModLoader.WorldStateBroker.ReservedFamilyAuthority">
+             <summary>
+             Register a capability DEFINITION (contract + default). The loader registers the official
+             <c>ashforge.*</c> catalog; a third-party mod may register its own <c>author.mod.*</c> definition.
+             Re-registering the same exact <see cref="T:AshForge.ModLoader.CapabilityId"/> is rejected (first wins) so a mod can't
+             silently redefine an official contract's shape.
+             </summary>
+             <summary>
+             Who may DEFINE contracts in the reserved <c>ashforge.*</c> family, by mod id.
+            
+             ★★ DELIBERATELY <c>internal</c>. A mod assembly cannot see it, so a mod cannot swap in an authority
+             that says yes to itself — which would make the whole gate decorative. The test harnesses reach it via
+             InternalsVisibleTo; nothing else can.
+            
+             ★ Wired to the real resolver by field initialiser rather than by a boot-time call, because a gate that
+             depends on someone remembering to install it is a gate that eventually ships uninstalled.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.MayDefineReserved(System.String)">
+            <summary>Fails CLOSED: no owner, no authority, or a throwing authority all mean "not proven", and an
+            unproven claim to the first-party contract space is refused. A security check that answers "probably"
+            on error is not a security check.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.EnableAutoRefresh(System.Int32)">
+            <summary>
+            Turn on the volatile safety-net refresh (spec §7): any capability that is never <see cref="M:AshForge.ModLoader.WorldStateBroker.Invalidate(AshForge.ModLoader.CapabilityId)"/>d
+            and declares no cadence is re-resolved every <paramref name="defaultIntervalTicks"/> ticks, so a
+            provider that forgets to invalidate doesn't freeze after first touch. Conservative by design (the net
+            exists for forgetful third parties; the four first-party mods all push). Call BEFORE registering the
+            catalog so each capability picks it up. 0/negative = off (declared per-cap cadences still run).
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.RegisterProvider``1(AshForge.ModLoader.ICapabilityProvider{``0},System.String,System.Int32)">
+            <summary>
+            Register a <paramref name="provider"/> (owned by <paramref name="modId"/>) against an already-defined
+            capability. Rejected with a clear diagnostic if no definition exists for that exact id/version, or if
+            the provider's payload type doesn't match the contract (LOADER-BROKER-001 §12). <paramref name="loadOrder"/>
+            is the deterministic tiebreaker for equal priority.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.Query``1(AshForge.ModLoader.CapabilityId)">
+            <summary>
+            Resolve a capability at a fixed version. NEVER throws for a registered capability — it falls through
+            the provider chain to the loader default. Returns <c>default(T)</c> and logs if the capability isn't
+            registered or the requested type doesn't match the contract (a programming error, surfaced not hidden).
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.TryQuery``1(AshForge.ModLoader.CapabilityRequest,``0@,System.Int32@)">
+            <summary>
+            Version-negotiated query: resolve against the HIGHEST version in <c>[MinVersion, MaxVersion]</c> that
+            has a definition. Returns false (and the consumer should use its own standalone path) if nothing in
+            range can answer or the type doesn't match — this is invariant #7: a v2-only consumer facing a
+            v1-only world falls back instead of crashing.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.TryGetResolution(AshForge.ModLoader.CapabilityId,System.String@,System.Boolean@)">
+            <summary>
+            Provenance of a capability's last resolution: <paramref name="winnerId"/> is the mod that answered
+            ("ashforge.loader" for the default floor, "composed" for aggregate), <paramref name="answeredByProvider"/>
+            is false when the loader DEFAULT answered (no real provider satisfied it). Lets a consumer tell
+            "floor answered 0" from "a provider computed 0" — the signal a pure <see cref="M:AshForge.ModLoader.WorldStateBroker.Query``1(AshForge.ModLoader.CapabilityId)"/> consumer
+            would otherwise lose, since Query always succeeds via the floor. Returns false if never resolved yet.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.QueryCached``1(AshForge.ModLoader.CapabilityDefinitionBase)">
+            <summary>
+            Serve a capability from the cache if present, else resolve once (first touch) and cache it. This is
+            what <see cref="M:AshForge.ModLoader.WorldStateBroker.Query``1(AshForge.ModLoader.CapabilityId)"/> uses so a direct query is cheap and TICK-IMMUTABLE — it never recomputes
+            mid-tick; refreshes ride the scheduled <see cref="M:AshForge.ModLoader.WorldStateBroker.Invalidate(AshForge.ModLoader.CapabilityId)"/> path at the tick boundary.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.OnChanged(AshForge.ModLoader.CapabilityId,System.String,System.Action)">
+            <summary>
+            Subscribe to a capability's change notifications (a resolved value that actually differs from the
+            last, per the contract's equality comparer). Handler faults are attributed to <paramref name="modId"/>
+            and isolated. Returns a token; dispose it to unsubscribe.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.Invalidate(AshForge.ModLoader.CapabilityId)">
+            <summary>
+            Mark a capability's cached value stale — providers call this when their underlying state changes
+            (e.g. Wealth &amp; Trade on a completed trade). Recompute is deferred to the tick-spreading scheduler,
+            never done inline, so a heavy capability never spikes a single frame; OnChanged fires only if the
+            recomputed value actually changed.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.AdvanceTick">
+            <summary>Advance the broker clock. Wired to <see cref="F:AshForge.ModLoader.Bus.GameTick"/> at startup.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.RegisteredCapabilities">
+            <summary>All registered capability ids, for the Hub/in-game resolution panel and diagnostics.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.ProviderCount(AshForge.ModLoader.CapabilityId)">
+            <summary>Provider count for one capability (0 = default-only). Cheap; for panel badges.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.DescribeProviders(AshForge.ModLoader.CapabilityId)">
+            <summary>The registered providers for a capability (empty = default-only). For the Resolution Panel
+            and declared-vs-registered reconciliation.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.IsRegistered(AshForge.ModLoader.CapabilityId)">
+            <summary>True if a capability id (any version) is registered — for reconciling manifest declarations.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.SetProviderEnabled(AshForge.ModLoader.CapabilityId,System.String,System.Boolean)">
+            <summary>
+            Enable or disable one provider for one capability — the safety valve for a misbehaving provider, allowed
+            from BOTH surfaces (Hub and in-game). Applies LIVE, persists to the override store, and invalidates so
+            consumers re-resolve. Disabling can never break a consumer: the chain always terminates in the loader
+            default floor, which is not a provider and cannot be disabled.
+            Returns false when the capability or provider isn't registered.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.SetProviderEnabled(AshForge.ModLoader.CapabilityId,System.String,System.Boolean,System.Boolean@)">
+             <summary>
+             As above, reporting whether the change reached DISK.
+            
+             ★ The change is applied LIVE before it is persisted, so <paramref name="persisted"/> = false means
+             "in effect this session, gone at next launch". A caller with a UI must SAY so. Swallowing it would put
+             a silent session-vs-persistence divergence back on the failure path — the exact class of bug the
+             override store, the atomic swap, and the derived <c>Overridden</c> flag all exist to prevent.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.SetProviderPriority(AshForge.ModLoader.CapabilityId,System.String,System.Int32)">
+            <summary>
+            Record a user priority override. ★ Writes the STORE ONLY — it deliberately does NOT re-sort the live
+            chain. Reordering takes effect at the next load (spec §4), because flipping an exclusive winner
+            mid-session would hand consumers a different answer for the same tick and destroy determinism.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.ResetOverrides(AshForge.ModLoader.CapabilityId)">
+             <summary>
+             Clear every user override for a capability ("reset to declared order").
+            
+             ★ Reset is SPLIT exactly the way setting one is, because it is the inverse of setting one:
+             the ENABLED half is undone live (every provider is re-enabled, then we re-resolve), while the PRIORITY
+             half only takes effect at the next load — priority was bound at registration, and re-sorting now would
+             flip an exclusive winner mid-tick under a consumer that already read the old value this tick.
+             Clearing the store without re-enabling (the original behaviour) left a user-disabled provider disabled
+             for the rest of the session while the store claimed it wasn't — the panel and reality disagreeing.
+             </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.TryGetPayloadType(AshForge.ModLoader.CapabilityId,System.Type@)">
+            <summary>
+            The payload CLR type bound to a capability's contract. Exposed so the build can EXPORT the official
+            contract table (see <c>BrokerCatalog.ExportContractsJson</c>) rather than have other repos retype it.
+            False if unregistered.
+            </summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.TryGetCapabilityInfo(AshForge.ModLoader.CapabilityId,AshForge.ModLoader.ResolutionMode@,System.String@)">
+            <summary>Read a capability's resolution mode + declared unit (for the Resolution Panel). False if unregistered.</summary>
+        </member>
+        <member name="M:AshForge.ModLoader.WorldStateBroker.Reset">
+            <summary>Drop all registrations, providers, subscriptions and cache (tests / a clean reload).</summary>
+        </member>
+        <member name="T:StartupHook">
+            <summary>
+            .NET startup-hook entry point. The runtime invokes <c>StartupHook.Initialize()</c> — a top-level
+            type with no namespace and this exact signature — before the game's Main runs, when the env var
+            DOTNET_STARTUP_HOOKS points at this assembly. This is the whole bootstrap: from here we install our
+            dependency resolver and hand off to the mod loader. No game files are modified.
+            </summary>
+        </member>
+    </members>
+</doc>
