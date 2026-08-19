@@ -1,12 +1,17 @@
 AshLoader.dll shipped with this SDK
 -----------------------------------
-Loader commit : 59a8b6a
-Hub release   : 1.0.24 (Windows)
-Unsigned bytes: 164864
-sha256        : e80623d9c7479fbc98a88a916533e36fb9faac7c81bc7815dca7a4defb2d8db8
+Loader commit : b7f057c
+Loader version: 1.0.26
+Hub release   : 1.0.28 (Windows, stable)
+Unsigned bytes: 166912
+sha256        : ab58763835dd67689da6e5d104aead5f6554329f2b17a77e4900e89e0a763f7e
 
-AshLoader.xml sits beside it — the API documentation, built from the same commit. Your IDE reads
-it automatically, so hovering any loader type shows what it is for and what it costs you.
+This is the exact file the AshForge Hub deploys next to the game, not a rebuild of it. The Hub
+shipped this same loader in 1.0.26, 1.0.27 and 1.0.28; the loader carries its own version number
+from 1.0.26 onward, which is why the two numbers above differ.
+
+AshLoader.xml sits beside it — the API documentation, generated from the same commit. Your IDE
+reads it automatically, so hovering any loader type shows what it is for and what it costs you.
 
 This is a REFERENCE assembly. You compile against it; you never ship it. The real loader is
 deployed next to the game by the AshForge Hub, and that is the copy your mod runs against.
@@ -14,13 +19,8 @@ deployed next to the game by the AshForge Hub, and that is the copy your mod run
 MINIMUM LOADER FOR THE DOCUMENTED API: 5880219 (Hub 1.0.20)
 
 Those are two different numbers, deliberately. The minimum is the oldest loader that still has
-every API these docs describe — neither 1.0.23 nor 1.0.24 adds any mod-facing API, so a mod using
-only what is documented here still runs on any loader from 1.0.20 onward.
-
-  WARNING: the assembly above is NO LONGER the newest loader. Stable moved on to b7f057c
-  (Hub 1.0.26-1.0.28) and the live beta lane runs 9391c30 (Hub 1.0.29-beta.1). The mod-facing API
-  has been additive-only across every one of them - nothing has ever been removed - so compiling
-  against this assembly remains safe. Release-by-release detail: docs/10-loader-compatibility.md.
+every API these docs describe, so a mod using only what is documented here runs on any loader from
+1.0.20 onward.
 
 Compiling successfully therefore does NOT prove your mod loads on a player's install: this
 assembly can carry APIs that older loaders lack, and the compiler cannot warn you. See
@@ -28,18 +28,34 @@ docs/04-rules-that-bite.md, "Never assume the player's loader is as new as yours
 is not optional reading; getting it wrong stops your mod loading entirely rather than degrading
 it.
 
-What changed in this build that affects your mod
-------------------------------------------------
-- The `ashforge.*` capability FAMILY is now reserved for first-party contracts, and the check is
-  stricter than before: it compares the joined family name rather than the namespace alone, so a
-  definition using a namespace like "ashforge.something" is now refused where it previously
-  slipped through. A correctly-namespaced mod is unaffected — your contracts live under
-  "author.mod.*". This closes a hole where a mod could publish a HIGHER version of a first-party
-  contract and capture every consumer that asked for an open version range.
+In practice the risk is currently low and it is worth knowing why: the mod-facing API has been
+additive-only across every loader we have shipped. Nothing has ever been removed. Release-by-
+release detail is in docs/10-loader-compatibility.md.
+
+A note on lanes
+---------------
+This assembly is the newest loader on the STABLE lane, which is what the download on ashforge.dev
+installs and therefore what your users will be running. A separate beta lane exists for testing
+against pre-release builds of the game; it is not publicly available, and it is not what this SDK
+targets. Build against this and you are building for the people who can actually install your mod.
+
+What changed since the previous SDK build (1.0.24 -> 1.0.28)
+------------------------------------------------------------
+- Nothing that changes an API your mod calls. The public surface is identical to the 1.0.24
+  assembly this replaces — same types, same members, nothing added and nothing removed.
+- The loader now reports a version of its own (1.0.26), which is what the Hub and the diagnostics
+  report read. Before this it had no version distinct from the Hub's.
+- 1.0.27 and 1.0.28 are Hub-side releases that bundle this same loader unchanged.
+
+Still worth knowing, from 1.0.24
+--------------------------------
+- The `ashforge.*` capability FAMILY is reserved for first-party contracts, and the check compares
+  the joined family name rather than the namespace alone, so a definition using a namespace like
+  "ashforge.something" is refused. A correctly-namespaced mod is unaffected — your contracts live
+  under "author.mod.*". This closes a hole where a mod could publish a HIGHER version of a
+  first-party contract and capture every consumer that asked for an open version range.
   Note what is restricted: DEFINING a contract in that family. Providing and consuming an
   ashforge.* capability are unchanged and still entirely supported.
-- Nothing else here changes an API your mod calls. 1.0.23 was a Hub-side fix to in-Hub mod
-  updating and carries no loader change at all.
 
 Earlier, still worth knowing
 ----------------------------

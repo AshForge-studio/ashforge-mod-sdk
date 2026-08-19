@@ -3,7 +3,7 @@
 <!-- GENERATED FILE - do not edit. Source: data/loader-compat.json.
      Regenerate with: python tools/gen_loader_compat.py -->
 
-You compile against `lib/AshLoader.dll`, which is built from loader **`59a8b6a`** (Hub **1.0.24**).
+You compile against `lib/AshLoader.dll`, which is built from loader **`b7f057c`** (Hub **1.0.28**).
 The oldest loader that still has every API these docs describe is **`5880219`** (Hub **1.0.20**).
 
 Those are two different numbers on purpose. **Compiling successfully does not prove your mod
@@ -26,7 +26,7 @@ the compiler cannot warn you. See
 | **1.0.23** | stable | 2026-07-28 | `191522e` | — | Hub-side fix to in-Hub mod updating |
 | **1.0.24** | stable | 2026-07-28 | `59a8b6a` | 66 | 1 — see below |
 | **1.0.25** | linux-only | 2026-07-28 | — | — | No Windows release carries this number |
-| **1.0.26** | stable | 2026-07-29 | `b7f057c` | 66 | The loader gained a version number of its own |
+| **1.0.26** | stable | 2026-07-29 | `b7f057c` | 66 | The loader gained a version number of its own (1 |
 | **1.0.27** | stable | 2026-07-29 | `b7f057c` | 66 | none |
 | **1.0.28** | stable | 2026-07-30 | `b7f057c` | 66 | Last Windows release on the stable lane |
 | **1.0.29-beta.1** | beta | 2026-08-03 | `9391c30` | 68 | 7 — see below |
@@ -48,7 +48,7 @@ Hub-side fix to in-Hub mod updating. Same loader commit as 1.0.22, so no loader 
 
 ### Hub 1.0.24 (2026-07-28, loader `59a8b6a`)
 
-This SDK's reference assembly is built from this commit.
+Was this SDK's reference assembly until 2026-08-18.
 
 - The reserved ashforge.* capability FAMILY check is stricter: it compares the joined family name rather than the namespace alone, so DEFINING a contract under a namespace like ashforge.something is now refused. Providing and consuming ashforge.* capabilities are unchanged.
 
@@ -58,11 +58,11 @@ No Windows release carries this number. The Linux lane shares the version counte
 
 ### Hub 1.0.26 (2026-07-29, loader `b7f057c`)
 
-The loader gained a version number of its own. No public API change from 59a8b6a.
+The loader gained a version number of its own (1.0.26). No public API change from 59a8b6a.
 
 ### Hub 1.0.28 (2026-07-30, loader `b7f057c`)
 
-Last Windows release on the stable lane.
+Last Windows release on the stable lane. THIS is the loader shipped in the SDK as lib/AshLoader.dll.
 
 ### Hub 1.0.29-beta.1 (2026-08-03, loader `9391c30`)
 
@@ -80,15 +80,15 @@ Migrated to game build 24493575 (beta). This is the live lane.
 
 ### The mod-facing API has been additive-only across every shipped loader.
 
-**Evidence.** Public surface of src/AshLoader compared at three commits - 59a8b6a (Hub 1.0.24, this SDK), b7f057c (Hub 1.0.26-1.0.28) and 9391c30 (Hub 1.0.29-beta.1). Types: 66, 66, 68. Public methods: 122, 122, 141. Public fields and properties: 191, 191, 220. NOTHING was removed at either step, and no method signature changed - a changed signature would appear as a removal, and there are none. The beta additions are the Binding and GameBindings types and their members. These are counts of DECLARATIONS IN SOURCE at each commit, compared by sorted signature rather than by total, so a remove-and-add pair cannot hide behind an unchanged count. Counting the compiled assemblies instead gives different absolute totals - a decompiler renders accessors and compiler-generated members differently - but the same result: comparing this SDK's shipped lib/AshLoader.dll against the beta Hub's bundled loader shows 2 types, 19 methods and 27 fields/properties ADDED and NOTHING removed.
+**Evidence.** Public surface of src/AshLoader compared at three commits - 59a8b6a (Hub 1.0.24), b7f057c (Hub 1.0.26-1.0.28, the assembly this SDK ships) and 9391c30 (Hub 1.0.29-beta.1). Types: 66, 66, 68. Public methods: 122, 122, 141. Public fields and properties: 191, 191, 220. NOTHING was removed at either step, and no method signature changed - a changed signature would appear as a removal, and there are none. The beta additions are the Binding and GameBindings types and their members. These are counts of DECLARATIONS IN SOURCE at each commit, compared by sorted signature rather than by total, so a remove-and-add pair cannot hide behind an unchanged count. Counting the compiled assemblies instead gives different absolute totals - a decompiler renders accessors and compiler-generated members differently - but the same result: decompiling the shipped binaries and diffing them shows the beta loader ADDS 2 types, 19 methods and 27 fields/properties over the stable one and REMOVES nothing. The 1.0.24 and 1.0.28 assemblies decompile to identical public surfaces.
 
 **What it means for you.** A mod using only the documented API and built against this SDK still compiles and loads on every shipped loader from 1.0.20 onward, including the beta lane. Caveat worth knowing: this compares declarations, so it proves nothing was removed or renamed. It cannot prove that a method kept doing the same thing - for behaviour changes, read the per-release notes above.
 
-### The SDK's reference assembly is older than any loader now in players' hands.
+### RESOLVED 2026-08-18 - the SDK's reference assembly is now the newest loader on the lane the public installs.
 
-**Evidence.** lib/AshLoader.dll is built from 59a8b6a (Hub 1.0.24, 2026-07-28). The last stable loader is b7f057c (Hub 1.0.28, 2026-07-30) and the live beta loader is 9391c30 (Hub 1.0.29-beta.1, 2026-08-03).
+**Evidence.** It used to be built from 59a8b6a (Hub 1.0.24, 2026-07-28) while stable had already moved to b7f057c (Hub 1.0.28, 2026-07-30). It now ships b7f057c itself - the exact file Hub 1.0.28 deploys. The beta lane's 9391c30 is deliberately NOT the target: the beta Hub is password-gated, so nobody who installs a mod from ashforge.dev is running it.
 
-**What it means for you.** Because the API is additive-only, compiling against this assembly is still safe today - nothing it declares has been removed from any newer loader. What you cannot do is assume the reverse: the newer loaders carry behaviour this assembly knows nothing about. VERSION.txt used to claim you compile against exactly what players run; that claim has been corrected rather than left standing. Refreshing the assembly itself is a separate decision.
+**What it means for you.** Because the API is additive-only, compiling against this assembly is still safe today - nothing it declares has been removed from any newer loader. What you cannot do is assume the reverse: the newer loaders carry behaviour this assembly knows nothing about. VERSION.txt used to claim you compile against exactly what players run. That claim is true again: this assembly is the file Hub 1.0.28 deploys, byte for byte.
 
 ### The beta lane carries mod-facing behaviour changes that no author-facing document describes.
 
