@@ -113,5 +113,10 @@ review to take considerably longer and to involve more back-and-forth.
 Bump `version` in `mod.json`, send us the new build, we re-sign and republish. The Hub shows players an
 update is available for first-party mods and links out for others.
 
+If a published build turns out to be broken, or a mod reaches the end of its life, see
+[Withdrawing a bad build, and retiring a mod](11-withdrawing-and-retiring.md). The short version: we
+always roll **forward** to a new version rather than re-pointing at an old one, and a retired mod
+stays downloadable.
+
 **Don't break saves in an update** unless you say so loudly in the changelog. A player who updates
 mid-colony and loses it will not come back. Adding decs is safe; renaming or removing them is not.

@@ -88,6 +88,8 @@ Read them in this order if you're new:
 7. **[Testing and debugging](docs/07-testing-and-debugging.md)** — running unsigned, logs, common failures.
 8. **[Publishing](docs/08-publishing.md)** — signing, submission, what we check.
 9. **[Changing existing content](docs/09-changing-existing-content.md)** — data-only mods (no C# at all), and how to override a dec the game already defines.
+10. **[Loader compatibility](docs/10-loader-compatibility.md)** — which loader ships with which Hub release, what changed in each, and what still runs where.
+11. **[Withdrawing a bad build, and retiring a mod](docs/11-withdrawing-and-retiring.md)** — how a broken release is fixed, and what happens to a mod at the end of its life.
 
 If you only read one page after the walkthrough, make it **Rules that bite**.
 
