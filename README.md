@@ -90,6 +90,7 @@ Read them in this order if you're new:
 9. **[Changing existing content](docs/09-changing-existing-content.md)** — data-only mods (no C# at all), and how to override a dec the game already defines.
 10. **[Loader compatibility](docs/10-loader-compatibility.md)** — which loader ships with which Hub release, what changed in each, and what still runs where.
 11. **[Withdrawing a bad build, and retiring a mod](docs/11-withdrawing-and-retiring.md)** — how a broken release is fixed, and what happens to a mod at the end of its life.
+12. **[Shipping your own art](docs/12-shipping-your-own-art.md)** — meshes and textures. Your art is read at runtime and never meets Godot's importer, which is why exported tangents are on you.
 
 If you only read one page after the walkthrough, make it **Rules that bite**.
 

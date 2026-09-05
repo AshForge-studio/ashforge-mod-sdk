@@ -194,6 +194,23 @@ hand, do the same:
 
 ---
 
+## ★ If you ship meshes, export them with tangents
+
+**What breaks:** every normal map on your own models, silently.
+
+The game's art is processed by Godot's editor on the way into the build, and that importer generates
+vertex tangents for any mesh that arrives without them. Your art is read off disk at runtime and never
+meets that importer, so it gets exactly what your exporter wrote — and most exporters, Blender's glTF
+exporter included, write none unless asked.
+
+A normal map with no tangents is sampled in a space that does not exist. The model still renders, so it
+reads as a bad bake rather than missing vertex data.
+
+Full version, with the log line to look for and the two other art traps:
+**[Shipping your own art](12-shipping-your-own-art.md)**.
+
+---
+
 ## ★ Patch the right thing: constructors run once
 
 A camera, a manager, a controller — many game objects are built **once per process**. Patching a
@@ -232,4 +249,5 @@ Two consequences:
 - [ ] Save data is versioned and handles `Existed == false`
 - [ ] No game assemblies copied next to your DLL
 - [ ] Patched the thing that runs repeatedly, not a one-time constructor
+- [ ] Any mesh you ship that uses a normal map was exported **with tangents**
 - [ ] Tested with the game **paused** and at **every game speed**
