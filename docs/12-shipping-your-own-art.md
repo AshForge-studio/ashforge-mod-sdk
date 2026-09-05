@@ -1,5 +1,17 @@
 # Shipping your own art
 
+> **Read this first: your own art needs a loader that carries the asset bridge, and the loader shipped in
+> this SDK does not.**
+>
+> `lib/AshLoader.dll` here is **1.0.26**, from **Hub 1.0.28** — the current public release. It has no asset
+> bridge, so a `res://YourModId/...` path resolves to nothing and the game falls back to its own art. Custom
+> meshes and textures arrive with a later loader; [Loader compatibility](10-loader-compatibility.md) is the
+> page that tracks which loader ships with which Hub release.
+>
+> Everything below is written now so it is ready when that loader is, and because the export decisions it
+> describes are made long before you can test them. **Export correctly today and your art will simply work
+> the day the loader lands.** Nothing on this page is a workaround for the current release.
+
 Your mod can ship its own meshes and textures. The game reads them at **runtime**, and that is one word
 doing a lot of work: the game's own art was processed by the Godot **editor** on the way into the build, and
 yours never is. Almost everything on this page follows from that single asymmetry.

@@ -206,6 +206,9 @@ exporter included, write none unless asked.
 A normal map with no tangents is sampled in a space that does not exist. The model still renders, so it
 reads as a bad bake rather than missing vertex data.
 
+⚠ Custom art needs a loader that carries the asset bridge, and the one in this SDK (1.0.26, Hub 1.0.28)
+does not — so this rule is one to get right at export time rather than something you can test today.
+
 Full version, with the log line to look for and the two other art traps:
 **[Shipping your own art](12-shipping-your-own-art.md)**.
 
