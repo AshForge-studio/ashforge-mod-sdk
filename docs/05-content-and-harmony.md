@@ -7,15 +7,19 @@ Most mods do some of both.
 
 ## Content: decs
 
-The game's content lives in `dec` XML — items, rocks, factions, work categories, alerts. Drop your own in
-`Decs/` and the loader parses them alongside the game's own, **after** your assembly is loaded, so any
-custom dec *types* you declare in C# resolve in time.
+The game's content lives in `dec` XML — items, rocks, factions, work categories, alerts. Put your own in a
+`Decs\` folder in your project:
 
 ```
-mods/YourMod/
+CoolMod/
+  CoolMod.csproj
+  mod.json
   Decs/
     MyThings.xml
 ```
+
+The build copies that folder **twice**, byte-identical: to `Dec\` for the game's own mod system and to
+`Decs\` for the AshForge loader. Subfolders are kept. You only ever edit your project's `Decs\`.
 
 A real example, trimmed:
 
@@ -35,6 +39,9 @@ A real example, trimmed:
 </Decs>
 ```
 
+If a player has your mod installed both ways, the game logs `Create mode used when a Dec already exists,
+falling back to Patch` once for each of your decs. That's harmless — both copies declare the same dec.
+
 ### Rules for decs
 
 **`decName` is permanent.** Anything the game saves that references your dec stores this string. If a
@@ -49,7 +56,8 @@ you never tested.
 mined by the game's own mining work — no custom work type, no parallel system to keep in sync, and it
 behaves correctly in situations we never thought about.
 
-**A content-only mod needs no DLL at all.** `mod.json` plus `Decs/` is a complete mod.
+**A content-only mod needs no C#.** See
+[Changing existing content](09-changing-existing-content.md#a-data-only-mod-needs-no-c).
 
 **Changing content the game already has** — overriding, patching or translating an existing dec —
 needs one extra attribute, and redeclaring the dec without it silently collides instead of
@@ -67,26 +75,40 @@ before writing one.
 
 ## Behaviour: Harmony
 
-[Harmony](https://harmony.pardeike.net/) is referenced for you. Patch in `Init`:
+The game doesn't ship [Harmony](https://harmony.pardeike.net/), so the SDK does: Harmony **2.3.3** (MIT),
+referenced for you and copied into your mod's `Assembly\` folder. Every SDK mod carries a byte-identical
+copy, and that's fine — the first one loaded is the one every mod uses. **Never swap in another Harmony
+build:** two different assemblies named `0Harmony` in one process break the patches of every mod that uses
+either.
+
+Patch in `Start`:
 
 ```csharp
-using HarmonyLib;
-
-public void Init(ModContext ctx)
+public void Start(IModHost2 host)
 {
-    new Harmony(ctx.ModId).PatchAll();
+    new HarmonyLib.Harmony(host.ModId).PatchAll(typeof(ModMain).Assembly);
 }
 ```
 
-Use your mod id as the Harmony id — it's unique, and it makes conflicts traceable to you.
+Use your mod id as the Harmony id — it's unique, and it makes conflicts traceable to you. Pass your own
+assembly to `PatchAll` explicitly.
 
 ```csharp
-[HarmonyPatch(typeof(SomeGameClass), nameof(SomeGameClass.SomeMethod))]
+[HarmonyLib.HarmonyPatch(typeof(SomeGameClass), nameof(SomeGameClass.SomeMethod))]
 static class MyPatch
 {
     static void Postfix(SomeGameClass __instance) { ... }
 }
 ```
+
+### ★★ Don't patch what the AshForge loader patches
+
+The AshForge loader patches with its own renamed copy of Harmony, and two copies patching the same method
+don't combine — one side's patches silently disappear. The SDK logs a `[harmony] ✗` line naming any
+method your mod and the loader both patch. Read
+[Rules that bite](04-rules-that-bite.md#-never-patch-a-method-the-ashforge-loader-patches) before you
+patch anything to do with saving, loading, world activation, input or expeditions — the host's save data
+and events usually do the job without a patch.
 
 ### Patch the thing that actually runs
 
@@ -106,16 +128,15 @@ than a transpiler. Transpilers break on any game update that shifts the IL — a
 
 ### Don't copy game assemblies next to your mod
 
-Your mod loads into the game's own `AssemblyLoadContext`. Shipping your own copy of
-`Ascent of Ashes.dll` or `GodotSharp.dll` can put a second copy of those types in the process, and your
-patches then apply to the copy nobody is running. The SDK marks every reference copy-local **false** for
-this reason; keep it that way.
+Shipping your own copy of `Ascent of Ashes.dll` or `GodotSharp.dll` can put a second copy of those types in
+the process, and your patches then apply to the copy nobody is running. The SDK marks every game reference
+copy-local **false** for this reason; keep it that way.
 
 ### Patching other mods
 
-You can, and the broker is usually the better answer — it's designed for optional cooperation and doesn't
-break when the other mod updates. If you do patch another mod, use reflection by name so a missing target
-degrades instead of throwing at type-load, and expect to re-check it on their every release.
+You can, but a published value is usually the better answer — see
+[Talking to other mods](06-capabilities.md). If you do patch another mod, use reflection by name so a
+missing target degrades instead of throwing, and expect to re-check it on their every release.
 
 ---
 

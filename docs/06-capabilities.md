@@ -1,153 +1,99 @@
 # Talking to other mods
 
-The **world-state broker** lets mods answer questions for each other without depending on each other.
+A **capability** is a named value one mod publishes and others can read — a heat level, a threat score, a
+count. It lets mods cooperate without depending on each other.
 
-The design rule it exists to enforce: **your mod must work standalone.** You ask a question; if the mod
-that would answer it isn't installed, you get a sensible default instead of an exception. No hard
+The design rule it exists to enforce: **your mod must work standalone.** You ask for a value; if the mod
+that would publish it isn't installed, you find out and carry on with your own default. No hard
 dependency, no load-order dance, no "requires X" in your description.
 
 ---
 
-## Asking a question
+## Publishing a value
 
 ```csharp
-using AshForge.ModLoader;
-
-ColonyNetWorth worth = ctx.Query<ColonyNetWorth>(Capabilities.ColonyNetWorth);
-if (worth.Tier >= 3) { /* wealthy colony */ }
+void PublishCapability<T>(string owner, string name, int version, Func<T> provide, T fallback,
+                          Func<T, bool> validate = null, string unit = null, Func<T, double> scalar = null,
+                          double scalarMin = double.NaN, double scalarMax = double.NaN, int refreshEveryTicks = 0);
 ```
-
-`Query` **never throws** for a capability in the official catalogue. If nothing provides it you get the
-loader's registered default, so this is safe to call whether or not the providing mod exists.
-
-### The official catalogue
-
-Defined in `AshForge.ModLoader.Capabilities`:
-
-| Id | Payload | Meaning |
-|---|---|---|
-| `Capabilities.ColonyNetWorth` | `ColonyNetWorth` (`Total`, `Tier`) | How wealthy the colony is |
-| `Capabilities.FactionStanding` | — | Reputation with factions |
-| `Capabilities.RegionThreat` | — | Threat level of the region |
-| `Capabilities.WorldLocations` | — | Known locations on the world map |
-| `Capabilities.PrisonerRoster` | — | Current captives |
-
-Check the XML docs on `BrokerCatalog` in `lib/AshLoader.dll` for each payload's exact shape — your IDE
-will show them.
-
-### When you need to know whether anyone really answered
-
-`Query` hides the difference between "a real provider answered" and "you got the default". When that
-distinction matters — because you have a genuinely better standalone path — use `TryQuery`:
 
 ```csharp
-var req = new CapabilityRequest(Capabilities.ColonyNetWorth, minVersion: 1, maxVersion: 1);
-if (ctx.TryQuery(req, out ColonyNetWorth worth, out int version))
-    UseTheRealNumber(worth);
-else
-    UseMyOwnEstimate();
+host.PublishCapability<float>("yourname.coolmod", "heat", 1,
+    provide: () => _heat,
+    fallback: 0f,
+    validate: v => v >= 0f && v <= 1f);
 ```
 
-> ⚠ Build that `CapabilityRequest` as a **local inside a guarded method**, never as a `static readonly`
-> field. It's a struct, and a static struct field forces its type to resolve when your class loads — on
-> an older loader that kills the whole class. See
-> [Rules that bite](04-rules-that-bite.md#-never-assume-the-players-loader-is-as-new-as-yours).
+- **`owner` + `name` + `version`** identify the value. Readers must use exactly the same three.
+- **`provide`** is called when someone reads the value. If it throws, or `validate` rejects the result,
+  readers get `fallback` instead.
+- **`unit`, `scalar`, `scalarMin`, `scalarMax`, `refreshEveryTicks`** describe the value to the AshForge
+  loader's world-state broker. They matter only on the Hub route.
+
+Each value has **one** publisher.
+
+### Name it under your own namespace
+
+Use `owner` in the form `author.mod` — the same shape as your mod id. The `ashforge.*` family is reserved:
+on the Hub route the loader refuses a definition there unless the mod is AshForge-signed.
+
+Version from `1` and treat a published shape as permanent. Publishing version `2` alongside `1` is fine;
+changing what `1` means breaks every reader silently.
 
 ---
 
-## Answering a question
-
-Implement `ICapabilityProvider<T>` and register it:
+## Reading a value
 
 ```csharp
-ctx.RegisterProvider(new MyNetWorthProvider());
+bool TryQuery<T>(string owner, string name, int version, out T value);
 ```
-
-Declare it in `mod.json` too, so the Hub can show players which mods work well together:
-
-```json
-"capabilities": {
-  "provides": [
-    { "id": "ashforge.colony.net_worth@1", "priority": 100, "mode": "exclusive" }
-  ],
-  "consumes": [
-    "ashforge.optics.ui.text_scale@1..1"
-  ]
-}
-```
-
-- **`priority`** — higher wins when several mods provide the same thing.
-- **`mode`** — `exclusive` means one winner takes it.
-- Ties on priority are broken by **`loadOrder`**, lowest first. Deterministic, never random.
-
-The manifest declaration is advisory metadata for the Hub's "better with" graph. **The registration in
-code is what actually takes effect.** Keep them in step; a mismatch isn't an error today but it makes
-your mod's page lie.
-
-The loader reconciles the two at startup and logs `REGISTERED-NOT-DECLARED` when you register something
-your manifest doesn't mention. On loaders before 1.0.22 that check misfired for **every** third-party
-capability — the id string couldn't be matched back to the id your code registered, so a correct manifest
-was reported as missing. If you're chasing that warning on an older loader, it isn't your manifest.
-
-Two things worth knowing when you write the id:
-
-- Your own contracts must live under **`author.mod.*`** — the `ashforge.*` **family** is reserved for
-  first-party contract *definition* and a mod registering there is refused. Providing or consuming an
-  `ashforge.*` capability is always fine; only defining one is reserved.
-  ★ As of loader `59a8b6a` (Hub 1.0.24) the check compares the **joined family name**, not the namespace
-  alone. A namespace like `ashforge.something` is now refused where it previously slipped through, because
-  `ashforge.colony` + `net_worth` and `ashforge` + `colony.net_worth` are the same family. A correctly
-  namespaced mod sees no difference.
-- The id in the manifest is matched by its **full canonical name**, `namespace.name@version`. Write it
-  exactly as your code constructs it.
-
-When your underlying data changes:
 
 ```csharp
-ctx.InvalidateCapability(Capabilities.ColonyNetWorth);
+float heat = host.TryQuery<float>("othername.othermod", "heat", 1, out float v) ? v : 0f;
 ```
 
-Recomputation is deferred to the scheduler, and `OnChanged` subscribers only fire if the value genuinely
-differs — so calling this often is cheap.
+`TryQuery` returns `false` when nobody publishes that value, so this is safe to call whether or not the
+other mod is installed. Query when you need the value, not in `Start` — the other mod may not have started
+yet.
 
 ---
 
-## Reacting to change
+## ★ The value type must be one both mods have
 
-```csharp
-IDisposable token = ctx.OnCapabilityChanged(Capabilities.ColonyNetWorth, () => Recalculate());
-```
+Use a system type: `float`, `int`, `double`, `bool`, `string` and the like. **Never a type defined in
+either mod.** Each mod is its own assembly; a class you declare is a different type from the one another
+mod declares with the same name, and the read fails.
 
-Fires only on a real change, not on every recompute. Dispose the token to unsubscribe.
+If you need several numbers, publish several capabilities.
 
 ---
 
-## Defining your own capability
+## What happens on each route
 
-If you want *other* mods to be able to ask *you* something, define the contract:
+- **Through the Hub**, a published value goes to the AshForge loader's world-state broker, with its unit
+  and validation.
+- **On both routes**, it also goes into the SDK's shared registry inside the game process. So mods
+  installed only in the game's `Mods` folder can read each other with no Hub at all.
 
-```csharp
-ctx.RegisterCapability(new CapabilityDefinition<MyThing>( ... ));
-```
+When your mod was started through the Hub, `TryQuery` asks the loader's broker first, then the shared
+registry. When it was started by the game's own mod system, it reads the shared registry.
 
-**The `ashforge.*` family is reserved** for first-party contracts and the loader will reject a
-third-party definition that uses it — including a deeper namespace such as `ashforge.something`, since
-that lands in the same family. Yours must be `author.mod.*` — the same shape as your mod id:
+---
 
-```
-yourname.coolmod.some_thing@1
-```
+## What isn't available in 2.0
 
-Version your contract from `@1` and treat published shapes as permanent. Adding `@2` alongside `@1` is
-fine; changing what `@1` means breaks every consumer silently.
+The SDK exposes publishing and reading, and nothing else from the broker. The loader's full broker API —
+custom provider classes, aggregate contracts, invalidation and change notifications, and the loader's own
+contract types — is **not reachable from an SDK mod in 2.0**. Those contract types live in the loader, and
+your mod's code never references the loader.
 
 ---
 
 ## When to use this instead of just referencing the other mod
 
-Use the broker when you want *optional* enrichment — better behaviour if a mod is present, fine without
+Use a capability when you want *optional* enrichment — better behaviour if a mod is present, fine without
 it. That covers almost every cross-mod case, and it's why our own mods can ship in any combination.
 
-Referencing another mod's assembly directly creates a hard dependency: if it's missing, your mod throws
-`TypeLoadException` on first touch and **doesn't load at all**. If you truly need that, say so
-prominently in your description — a player who installs you without it just sees a mod that doesn't work.
+Referencing another mod's assembly directly creates a hard dependency: if it's missing, your mod fails
+when it first touches that type. If you truly need that, say so prominently in your description — a player
+who installs you without it just sees a mod that doesn't work.

@@ -468,8 +468,30 @@ namespace AshForge.NativeKit
         {
             if (handler == null) return;
             var list = Shared.Get<List<Action>>(Shared.TickKey);
-            lock (list) list.Add(handler);
+            lock (list) list.Add(Guard(handler, "a game-tick handler"));
             TickHook.Ensure(ModId, _log);
+        }
+
+        // ★ The game calls no mod code itself, so nothing above a native mod's handlers would ever report a
+        //   fault: the shared tick loop and bus must survive one mod's exception and keep running the others, and
+        //   they did — silently. Every handler a native host installs is wrapped here and reported to the mod's
+        //   own log: the first five of each kind in full, then every thousandth, so a fault on every frame cannot flood it.
+        //   (Through the AshForge loader, its own fault isolation reports them instead.)
+        private readonly Dictionary<string, int> _faults = new Dictionary<string, int>();
+
+        internal Action Guard(Action handler, string what) => () =>
+        {
+            try { handler(); }
+            catch (Exception e) { Fault(what, e); }
+        };
+
+        internal void Fault(string what, Exception e)
+        {
+            // Counted per kind of handler, so a fault on every frame cannot hide a rarer one behind it.
+            int n;
+            lock (_faults) { _faults.TryGetValue(what, out n); _faults[what] = ++n; }
+            if (n <= 5 || n % 1000 == 0)
+                _log($"[fault] {what} threw (time {n}): {e}");
         }
 
         public void ScheduleEvery(int intervalTicks, Action work)
@@ -481,7 +503,8 @@ namespace AshForge.NativeKit
             lock (_slots) { slot = _slots.Count; _slots.Add(every); }
             int offset = (int)((uint)StableHash(ModId + "#" + slot) % (uint)every);
             long tick = 0;
-            OnGameTick(() => { if ((tick++ + offset) % every == 0) work(); });
+            Action guarded = Guard(work, "scheduled work");
+            OnGameTick(() => { if ((tick++ + offset) % every == 0) guarded(); });
         }
         private readonly List<int> _slots = new List<int>();
 

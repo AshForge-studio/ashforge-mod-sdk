@@ -1,16 +1,14 @@
 # Shipping your own art
 
-> **Read this first: your own art needs a loader that carries the asset bridge, and the loader shipped in
-> this SDK does not.**
+> **Read this first: a mod with its own art needs the AshForge Hub.**
 >
-> `lib/AshLoader.dll` here is **1.0.26**, from **Hub 1.0.28** — the current public release. It has no asset
-> bridge, so a `res://YourModId/...` path resolves to nothing and the game falls back to its own art. Custom
-> meshes and textures arrive with a later loader; [Loader compatibility](10-loader-compatibility.md) is the
-> page that tracks which loader ships with which Hub release.
->
-> Everything below is written now so it is ready when that loader is, and because the export decisions it
-> describes are made long before you can test them. **Export correctly today and your art will simply work
-> the day the loader lands.** Nothing on this page is a workaround for the current release.
+> The game's own mod system cannot load a mod's own textures, meshes or sounds. Only the AshForge loader can,
+> through its asset bridge — **Hub 1.0.30 and later**. A player who installs your mod straight into the
+> game's `Mods` folder, without the Hub, gets the rest of your mod but none of your art: references to it
+> don't resolve. Say so plainly on your mod's page.
+
+Put your art in an `Assets\` folder in your project; the build packages it into your mod's `Assets\`
+folder, and warns you that such references resolve only through the Hub.
 
 Your mod can ship its own meshes and textures. The game reads them at **runtime**, and that is one word
 doing a lot of work: the game's own art was processed by the Godot **editor** on the way into the build, and
@@ -115,6 +113,6 @@ base-game mesh until you have them all. Half a mesh family is worse than none.
 - [ ] Every mesh with a normal map was exported **with tangents**
 - [ ] Every mesh reference is `ModId/name`, with **no extension**
 - [ ] Plants and storage buildings ship their **whole** mesh family, not just the base file
-- [ ] You launched once and read the log — a tangent warning names *your* mesh, not the game's shader
-
-— The AshForge Team
+- [ ] You launched once **through the Hub** and read the log — a tangent warning names *your* mesh, not the
+      game's shader
+- [ ] Your mod's page says the art needs the AshForge Hub

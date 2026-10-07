@@ -13,42 +13,58 @@
     "  mod_facing       = read from the loader commit range between releases; empty means the",
     "                     release carries no change a mod author can observe."
   ],
-
   "generated_from": "AshForgeHub shipped/hub-* tags + AshForgeModLoader src/AshLoader",
-  "derived_on": "2026-08-18",
-
+  "derived_on": "2026-10-07",
   "sdk_reference_assembly": {
-    "loader": "b7f057c",
+    "loader": "3801a87",
     "loader_version": "1.0.26",
-    "hub": "1.0.28",
-    "lane": "stable",
-    "note": "lib/AshLoader.dll in this SDK is the exact file Hub 1.0.28 deploys, not a rebuild. Refreshed 2026-08-18 from 59a8b6a/1.0.24; the public surface is identical between the two."
+    "hub": "1.0.30",
+    "lane": "public",
+    "note": "lib/AshLoader.dll in this SDK is the exact file Hub 1.0.30 deploys, not a rebuild. Its version string was not bumped from 1.0.26. Since SDK 2.0 only a mod's generated adapter references it."
   },
-
   "minimum_documented_api": {
     "loader": "5880219",
     "hub": "1.0.20",
     "note": "Oldest loader that has every API these docs describe."
   },
-
   "lanes": {
-    "stable": { "latest": "1.0.28", "status": "Retired 2026-08-03, superseded by the beta lane." },
-    "beta": { "latest": "1.0.29-beta.1", "status": "Live." }
+    "public": {
+      "latest": "1.0.30",
+      "status": "Live since 2026-09-25, on game build 25465256 — the game's former beta, now its public release. This is the only lane."
+    },
+    "beta": {
+      "latest": "1.0.29-beta.1",
+      "status": "Ended 2026-09-25, when the game's beta became its public release."
+    },
+    "stable": {
+      "latest": "1.0.28",
+      "status": "Retired 2026-08-03."
+    }
   },
-
   "releases": [
     {
-      "hub": "1.0.20", "lane": "stable", "date": "2026-07-25", "loader": "5880219",
+      "hub": "1.0.20",
+      "lane": "stable",
+      "date": "2026-07-25",
+      "loader": "5880219",
       "api_types": null,
-      "mod_facing": ["Minimum loader for the documented API."]
+      "mod_facing": [
+        "Minimum loader for the documented API."
+      ]
     },
     {
-      "hub": "1.0.21", "lane": "stable", "date": "2026-07-26", "loader": "8aaba75",
+      "hub": "1.0.21",
+      "lane": "stable",
+      "date": "2026-07-26",
+      "loader": "8aaba75",
       "api_types": null,
       "mod_facing": []
     },
     {
-      "hub": "1.0.22", "lane": "stable", "date": "2026-07-27", "loader": "191522e",
+      "hub": "1.0.22",
+      "lane": "stable",
+      "date": "2026-07-27",
+      "loader": "191522e",
       "api_types": null,
       "mod_facing": [
         "Once a mod is signed, its id, display name and capability declaration are read from inside the signed envelope rather than from mod.json.",
@@ -56,13 +72,19 @@
       ]
     },
     {
-      "hub": "1.0.23", "lane": "stable", "date": "2026-07-28", "loader": "191522e",
+      "hub": "1.0.23",
+      "lane": "stable",
+      "date": "2026-07-28",
+      "loader": "191522e",
       "api_types": null,
       "mod_facing": [],
       "note": "Hub-side fix to in-Hub mod updating. Same loader commit as 1.0.22, so no loader change at all."
     },
     {
-      "hub": "1.0.24", "lane": "stable", "date": "2026-07-28", "loader": "59a8b6a",
+      "hub": "1.0.24",
+      "lane": "stable",
+      "date": "2026-07-28",
+      "loader": "59a8b6a",
       "api_types": 66,
       "mod_facing": [
         "The reserved ashforge.* capability FAMILY check is stricter: it compares the joined family name rather than the namespace alone, so DEFINING a contract under a namespace like ashforge.something is now refused. Providing and consuming ashforge.* capabilities are unchanged."
@@ -70,30 +92,45 @@
       "note": "Was this SDK's reference assembly until 2026-08-18."
     },
     {
-      "hub": "1.0.25", "lane": "linux-only", "date": "2026-07-28", "loader": null,
+      "hub": "1.0.25",
+      "lane": "linux-only",
+      "date": "2026-07-28",
+      "loader": null,
       "api_types": null,
       "mod_facing": [],
       "note": "No Windows release carries this number. The Linux lane shares the version counter but ships independently, so Windows goes 1.0.24 to 1.0.26. Not a withdrawn release."
     },
     {
-      "hub": "1.0.26", "lane": "stable", "date": "2026-07-29", "loader": "b7f057c",
+      "hub": "1.0.26",
+      "lane": "stable",
+      "date": "2026-07-29",
+      "loader": "b7f057c",
       "api_types": 66,
       "mod_facing": [],
       "note": "The loader gained a version number of its own (1.0.26). No public API change from 59a8b6a."
     },
     {
-      "hub": "1.0.27", "lane": "stable", "date": "2026-07-29", "loader": "b7f057c",
+      "hub": "1.0.27",
+      "lane": "stable",
+      "date": "2026-07-29",
+      "loader": "b7f057c",
       "api_types": 66,
       "mod_facing": []
     },
     {
-      "hub": "1.0.28", "lane": "stable", "date": "2026-07-30", "loader": "b7f057c",
+      "hub": "1.0.28",
+      "lane": "stable",
+      "date": "2026-07-30",
+      "loader": "b7f057c",
       "api_types": 66,
       "mod_facing": [],
       "note": "Last Windows release on the stable lane. THIS is the loader shipped in the SDK as lib/AshLoader.dll."
     },
     {
-      "hub": "1.0.29-beta.1", "lane": "beta", "date": "2026-08-03", "loader": "9391c30",
+      "hub": "1.0.29-beta.1",
+      "lane": "beta",
+      "date": "2026-08-03",
+      "loader": "9391c30",
       "api_types": 68,
       "mod_facing": [
         "Harmony is shipped under our own name and kept out of the Default load context. This is the fix for two 0Harmony copies being loaded at once, which broke patches applied by native-format mods.",
@@ -105,9 +142,20 @@
         "Two public types added: Binding, GameBindings. Nothing removed."
       ],
       "note": "Migrated to game build 24493575 (beta). This is the live lane."
+    },
+    {
+      "hub": "1.0.30",
+      "lane": "public",
+      "date": "2026-09-25",
+      "loader": "3801a87",
+      "api_types": null,
+      "mod_facing": [
+        "Built for game build 25465256, the public release.",
+        "Deploys the asset bridge (AshAssetBridge.dll) beside the loader, so a mod's own textures, meshes and sounds can load through the Hub."
+      ],
+      "note": "The game's beta became its public release; the beta lane became the only one."
     }
   ],
-
   "compatibility_findings": [
     {
       "id": "additive-only",

@@ -11,49 +11,65 @@ loaded and did nothing".
 
 ## A data-only mod needs no C#
 
-No compiler, no `dotnet build`, no DLL. A folder, a manifest, and your XML:
+Translations, name lists, tuning tweaks and new items are all just XML. You have two ways to package
+them.
+
+### With the SDK (recommended)
+
+A project with no `.cs` files of your own:
 
 ```
-mods/YourMod/
+YourMod/
+  YourMod.csproj      the same .csproj as the template
   mod.json
   Decs/
     YourFile.xml
 ```
 
-`mod.json` is the whole manifest:
+`dotnet build` produces the full mod folder for both routes, exactly as for a code mod. Your mod's log
+will say `no class implements INativeMod — nothing to start.` — expected for a content-only mod.
 
-```json
-{
-  "id": "yourname.yourmod",
-  "name": "Your Mod",
-  "version": "1.0.0",
-  "author": "Your Name",
-  "loadOrder": 100,
-  "enabled": true
-}
+### By hand
+
+A folder in the game's `Mods` folder, carrying both routes' files:
+
+```
+<game>\Mods\YourMod\
+  About.xml           the game's manifest
+  Dec\
+    YourFile.xml      read by the game's own mod system
+  mod.json            the AshForge manifest
+  Decs\
+    YourFile.xml      read by the AshForge loader — the same file again
 ```
 
-That's a complete, working mod. Translations, name lists, tuning tweaks and new items all fit here.
+`About.xml` needs `Name`, `Author`, `ModVersion` and `GameVersion`:
+
+```xml
+<ModInfo>
+  <Name>Your Mod</Name>
+  <Author>Your Name</Author>
+  <ModVersion>1.0.0</ModVersion>
+  <GameVersion>0.2.0-RC4</GameVersion>
+</ModInfo>
+```
+
+`mod.json` needs at least `id`, `name` and `version` ([fields](02-mod-json.md)). If you only care about
+the game's own route, `About.xml` and `Dec\` are enough; the Hub needs `mod.json` and `Decs\`.
 
 ---
 
-## ⚠ Your XML must be inside `Decs/`
+## ⚠ Your XML must be in the right folder
 
-The loader reads decs from **`<yourmod>/Decs/`** and nowhere else. An XML file sitting at the root of
-your mod folder is never opened.
+The game's own mod system reads definitions **only from `Dec\`**. The AshForge loader reads them **only
+from `Decs\`**. An XML file anywhere else — at the root of your mod folder, or in the other route's
+folder — is never opened.
 
-This fails **silently and confusingly**: the loader finds your folder, reports the mod as discovered,
-loads it, and nothing happens. There is no error, because from the loader's point of view a mod with
-no `Decs/` folder is simply a mod that ships no content.
+This fails **silently and confusingly**: the mod shows up, enables, and nothing happens. There is no
+error, because a mod with no definitions folder is simply a mod that ships no content.
 
-To check, look in `%TEMP%\ashloader.log` for your mod:
-
-```
-Discovered mod: id=yourname.yourmod order=100 decs=True
-```
-
-**`decs=True` is the part that matters.** If it says `decs=False`, your XML is in the wrong place —
-move it into `Decs/` and relaunch.
+With the SDK you can't get this wrong: put your XML in your project's `Decs\` and the build copies it to
+both. By hand, keep the two folders identical.
 
 ---
 
@@ -128,11 +144,11 @@ Prefer `patch` when you only want to move a number. It survives game updates far
 
 ---
 
-## Load order decides who wins
+## Two mods overriding the same dec
 
-If two mods override the same dec, the one with the **higher `loadOrder`** is parsed later and wins.
-Overriding base-game content is inherently a claim on exclusivity, so keep it narrow — override the
-one dec you care about rather than replacing a whole file.
+Overriding base-game content is inherently a claim on exclusivity: if two mods override the same dec, one
+of them loses. Through the Hub, the mod with the **higher `loadOrder`** is parsed later and wins. Keep
+overrides narrow — override the one dec you care about rather than replacing a whole file.
 
 ---
 
@@ -140,15 +156,15 @@ one dec you care about rather than replacing a whole file.
 
 Some Godot games use a GDScript mod loader with `mods-unpacked/`, a `manifest.json` carrying
 `namespace` / `version_number`, and an `overwrites.gd` returning a map of `res://` paths. **None of
-that applies here.** AshForge is a C#/.NET loader that feeds your XML into the game's dec parser; it
-does not execute GDScript and has no resource-overwrite mechanism.
+that applies here.** Ascent of Ashes mods are dec XML and C# assemblies; both routes feed your XML into
+the game's dec parser, and there is no resource-overwrite mechanism.
 
 The translation is straightforward:
 
-| That convention | AshForge |
+| That convention | Ascent of Ashes |
 |---|---|
-| `mods-unpacked/<ns>-<name>/` | `mods/<YourMod>/` |
-| `manifest.json` | `mod.json` ([fields](02-mod-json.md)) |
+| `mods-unpacked/<ns>-<name>/` | `<game>\Mods\<YourMod>\` |
+| `manifest.json` | `About.xml` for the game, `mod.json` for the Hub ([fields](02-mod-json.md)) — the SDK writes `About.xml` for you |
 | `overwrites.gd` replacing a whole file | a dec with `mode="replace"` |
 | whole-file resource swap | per-dec override |
 

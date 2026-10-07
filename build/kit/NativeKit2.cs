@@ -404,6 +404,12 @@ namespace AshForge.NativeKit
         public void Subscribe(string eventName, Action<object> handler)
         {
             if (handler == null) return;
+            Action<object> raw = handler;
+            handler = data =>
+            {
+                try { raw(data); }
+                catch (Exception e) { Fault($"the '{eventName}' handler", e); }
+            };
             if (LoaderBus.Present)
             {
                 if (LoaderBus.Subscribe(eventName, ModId, handler)) return;

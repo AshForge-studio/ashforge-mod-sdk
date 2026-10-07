@@ -45,9 +45,10 @@ shipped — but it is signed again, because a signature covers a build, not a de
 ### For third-party authors
 
 Same rule, and one extra step: the Hub **notifies** for third-party mods rather than updating them
-silently, so your users act on a prompt rather than waking up patched. Say in the changelog that the
-new version reverts something, and say what. A notification a player does not understand gets
-dismissed.
+silently, so your users act on a prompt rather than waking up patched. Players who installed your mod
+straight into the game's `Mods` folder get no prompt at all — they update only when they download the new
+version from wherever you shared it. Say in the changelog that the new version reverts something, and say
+what. A notification a player does not understand gets dismissed.
 
 ### ⚠ Going backwards can break a save, and we do not promise otherwise
 

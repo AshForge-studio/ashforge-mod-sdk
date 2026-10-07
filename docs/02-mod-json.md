@@ -1,6 +1,7 @@
 # mod.json
 
-Every mod folder has one, next to your `Assemblies/` folder. It's how the loader knows what your mod is.
+`mod.json` sits next to your `.csproj` and is the one place your mod's identity lives. The build requires
+it, reads it, and writes everything else from it — including the game's own manifest, `About.xml`.
 
 ```json
 {
@@ -14,33 +15,50 @@ Every mod folder has one, next to your `Assemblies/` folder. It's how the loader
 }
 ```
 
-That's a complete, valid manifest. Everything beyond it is optional.
+That's a complete, valid manifest. The build stops with an error unless at least `id`, `name` and
+`version` are present.
 
 ---
 
-## Fields the loader actually reads
+## Fields
 
-| Field | Type | What it does |
+| Field | Used by | What it does |
 |---|---|---|
-| `id` | string | **Your identity.** Used for settings storage, save data, fault attribution, dev-command grouping, and capability ownership. If absent, the loader falls back to the **folder name**. |
-| `name` | string | Display name, shown in the Mod Manager and the Mod Settings screen. Falls back to the folder name. |
-| `loadOrder` | int | Lower loads first. Default `100`. Also the tiebreaker when two mods provide the same capability at equal priority. |
-| `enabled` | bool | `false` means the loader skips your mod entirely. The Hub's Mod Manager and the Dev Launcher both write this field. |
-| `capabilities` | object | Declares what you provide and consume. See [Talking to other mods](06-capabilities.md). |
+| `id` | your code, both routes | **Your identity.** It is `host.ModId`, it keys your settings and your save data, and it names your log file (`%TEMP%\<id>.log`). The AshForge loader identifies your mod by it. |
+| `name` | both routes | Display name. Written into `About.xml` as `Name` for the game's Mods menu, and shown by the Hub. |
+| `version` | both routes | Written into `About.xml` as `ModVersion`. The Hub compares it against the catalogue to show "Update available", so keep it accurate and use semver. Also names the release zip. |
+| `author` | both routes | Written into `About.xml` as `Author`. |
+| `description` | Hub | Displayed. Write it for a player deciding whether to install your mod, not for another developer. |
+| `loadOrder` | Hub | Lower loads first. Default `100`. |
+| `enabled` | Hub | `false` means the AshForge loader skips your mod. The Hub's Mod Manager writes this field. |
 
-**Pick your `id` carefully and never change it.** It keys the player's settings and your save data. Renaming it silently resets both — the player's configuration is simply gone, with no error.
+**Pick your `id` carefully and never change it.** Renaming it silently resets every player's settings for
+your mod and orphans your save data — no error, the data is simply gone.
 
 Use a namespaced form — `yourname.modname` — so you can't collide with someone else.
 
----
+### The folder name is an identity too
 
-## Fields that are read by people, not code
+The game's own mod system doesn't read `mod.json`. It identifies a mod by its **folder name**, which the
+SDK takes from your project name (or from `<AshForgeModFolder>` in your `.csproj`). Treat it exactly like
+the `id`: choose it once and keep it stable across releases.
 
-| Field | Notes |
-|---|---|
-| `version` | Nothing enforces this. The Hub compares it against the catalogue to show "Update available", so keep it accurate and use semver. |
-| `author` | Displayed. |
-| `description` | Displayed. Write it for a player deciding whether to install your mod, not for another developer. |
+### About.xml
+
+Generated on every build — don't write one by hand in an SDK project:
+
+```xml
+<ModInfo>
+  <Name>Cool Mod</Name>
+  <Author>Your Name</Author>
+  <ModVersion>1.0.0</ModVersion>
+  <GameVersion>0.2.0-RC4</GameVersion>
+</ModInfo>
+```
+
+`GameVersion` comes from `<AshForgeGameVersion>` in your `.csproj`, default `0.2.0-RC4` — the current
+public build of the game (25465256). The game flags a mod built for another version as possibly
+incompatible.
 
 ---
 
@@ -57,75 +75,60 @@ Set `saveCritical` when turning your mod off can damage an existing save — whi
 mod defines **decs, work categories or damage types** that get written into saves **by name**. See
 [Rules that bite](04-rules-that-bite.md#-your-mods-data-can-make-a-save-unloadable).
 
-**This is enforced, and it matters more than it looks.** The Hub has no separate uninstall button —
-**disabling a mod *is* the uninstall path, and it's one click.** So when a player unticks a `saveCritical`
-mod that was enabled, the Hub stops them with a full modal: *"Disabling this mod will break your save and
-may result in permanent data loss. This action cannot be safely reversed."*
-
-It covers the routes that never touch your checkbox too — **Disable all**, and importing a saved load
-order both hit the same gate. Consent is remembered per mod so a player isn't nagged twice, and it's
-**withdrawn if they turn your mod back on**.
+In the Hub, disabling a mod *is* the uninstall path, and it's one click. So when a player unticks a
+`saveCritical` mod that was enabled, the Hub stops them with a full modal: *"Disabling this mod will break
+your save and may result in permanent data loss. This action cannot be safely reversed."* **Disable all**
+and importing a saved load order hit the same gate. Consent is remembered per mod, and withdrawn if they
+turn your mod back on.
 
 `saveWarning` is optional and is **your own words for why**, shown in that dialog in place of the generic
-line. Use it. "This mod stores data inside your saved games" is true but tells a player nothing; naming
-what actually breaks lets them make a real decision.
+line. Name what actually breaks, so a player can make a real decision.
 
-Costs you one line, and it's the difference between a player losing a colony and a player being warned.
-Say it in your `description` as well — that's what they read *before* installing.
+This protection is the Hub's. The game's own Mods menu reads `About.xml`, not `mod.json`, and gives no such
+warning — so **say it in your `description` as well**, and on any page where you share the mod.
 
 ---
 
 ## What the signature covers
 
-When your mod is signed for publication, the signature covers **`Assemblies/` and `Decs/` only**.
+When AshForge signs your mod for the catalogue, the signature covers **`Assemblies/`, `Decs/`,
+`Assembly/`, `Dec/` and `Parcels/`** — everything either route executes or injects.
 
-`mod.json` is deliberately **not** signed, because the Mod Manager rewrites it whenever a player enables,
-disables or reorders your mod — a signature over it would break the moment anyone touched their own mod
-list.
+`mod.json` is deliberately **not** signed, because the Hub's Mod Manager rewrites it whenever a player
+enables, disables or reorders mods. So **never put a security decision in `mod.json`.** It's metadata
+anyone can edit.
 
-The practical consequence for you: **never put a security decision in `mod.json`.** It's metadata a
-player (or anything else) can edit. Read your id and version from it for convenience; don't trust it for
-anything that matters.
-
-### Your identity is sealed when you sign (loader 1.0.22+)
-
-There was a gap in the arrangement above. The loader read your **id**, your **display name** and your
-**capability declaration** out of `mod.json` — the one file the signature doesn't cover — so on a signed
-mod those were all still editable *after* signing. The name shown to players in the unverified-mods
-warning is one of them, which meant an attacker-editable string was being presented inside a trusted
-frame.
-
-Signing now copies those values into `ashforge.manifest.json`, which **is** covered by the signature. The
-loader reads them back only once your bytes are proven authentic, intact and un-revoked, and where the
-signed manifest and `mod.json` disagree, **the signed value wins** and the swap is named in the log.
-
-What this means in practice:
-
-- **Nothing to do.** Signing handles it; a manifest without these fields behaves exactly as before, so
-  older signed mods keep working unchanged.
-- **A mismatch is a warning, not a rejection.** The Mod Manager legitimately rewrites `mod.json`, so
-  refusing to load on a disagreement would break the game for a player who did nothing wrong.
-- **Re-sign to get it.** The sealed identity only appears once a mod is signed again — an existing signed
-  mod gains nothing until then.
-- Your **capability declaration** is read from the signed manifest too, so it is a baseline an audit can
-  actually trust rather than one anybody can edit.
+Signing also copies your id, display name and capability declaration into `ashforge.manifest.json`, which
+is signed. The AshForge loader reads them back from there once the signature checks out; where the signed
+manifest and `mod.json` disagree, the signed value wins and the swap is named in the loader's log. There is
+nothing for you to do — signing handles it.
 
 ---
 
 ## Folder layout
 
+`dotnet build` writes the finished mod to `bin\<Config>\net8.0\mod\<Folder>\`:
+
 ```
-mods/
-  YourModFolder/
-    mod.json
-    Assemblies/
-      YourMod.dll          ← loaded, and signed
-    Decs/
-      Whatever.xml         ← parsed into the game's definition database, and signed
+<Folder>/
+  About.xml                     the game's manifest, generated from mod.json
+  Assembly/
+    <Project>.Native.dll        your code
+    0Harmony.dll                Harmony 2.3.3
+  Dec/
+    Bootstrap.xml               generated; starts your mod in the game's mod system
+    ...                         your Decs\ content
+  Assemblies/
+    <Folder>.Loader.dll         the AshForge adapter — the only file the AshForge loader loads from here
+  Decs/
+    ...                         your Decs\ content again, byte-identical
+  mod.json
+  Parcels/  Assets/             if your project has them
+  CHANGELOG.md                  if your project has one
+  THIRD-PARTY-NOTICES.txt       the Harmony notice
 ```
 
-The folder name and your `id` don't have to match, and in practice often don't — our own mods use folder
-`AshWealth` with id `ashforge.wealth`. The SDK deploys to a folder named after your assembly; override it
-with `<AshForgeModId>` in your `.csproj` if you want something else.
+The game reads `About.xml`, `Assembly\` and `Dec\`. The AshForge loader reads `mod.json`, `Assemblies\` and
+`Decs\`; the adapter it loads from `Assemblies\` then starts your code from the same `Assembly\` folder.
 
-Multiple DLLs in `Assemblies/` are fine. All of them get loaded and scanned for entry points.
+The folder name and your `id` don't have to match — the SDK defaults the folder to your project name.

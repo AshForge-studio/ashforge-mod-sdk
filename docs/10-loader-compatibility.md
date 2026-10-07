@@ -3,7 +3,7 @@
 <!-- GENERATED FILE - do not edit. Source: data/loader-compat.json.
      Regenerate with: python tools/gen_loader_compat.py -->
 
-You compile against `lib/AshLoader.dll`, which is built from loader **`b7f057c`** (Hub **1.0.28**).
+You compile against `lib/AshLoader.dll`, which is built from loader **`3801a87`** (Hub **1.0.30**).
 The oldest loader that still has every API these docs describe is **`5880219`** (Hub **1.0.20**).
 
 Those are two different numbers on purpose. **Compiling successfully does not prove your mod
@@ -13,8 +13,8 @@ the compiler cannot warn you. See
 
 ## Lanes
 
-- **stable** — latest `1.0.28`. Retired 2026-08-03, superseded by the beta lane.
-- **beta** — latest `1.0.29-beta.1`. Live.
+- **stable** — latest `1.0.28`. Retired 2026-08-03.
+- **beta** — latest `1.0.29-beta.1`. Ended 2026-09-25, when the game's beta became its public release.
 
 ## Every shipped release
 
@@ -30,6 +30,7 @@ the compiler cannot warn you. See
 | **1.0.27** | stable | 2026-07-29 | `b7f057c` | 66 | none |
 | **1.0.28** | stable | 2026-07-30 | `b7f057c` | 66 | Last Windows release on the stable lane |
 | **1.0.29-beta.1** | beta | 2026-08-03 | `9391c30` | 68 | 7 — see below |
+| **1.0.30** | public | 2026-09-25 | `3801a87` | — | 2 — see below |
 
 ## What changed, release by release
 
@@ -76,6 +77,13 @@ Migrated to game build 24493575 (beta). This is the live lane.
 - Signature coverage widened to what a mod actually ships, not only Assemblies/ and Decs/.
 - Two public types added: Binding, GameBindings. Nothing removed.
 
+### Hub 1.0.30 (2026-09-25, loader `3801a87`)
+
+The game's beta became its public release; the beta lane became the only one.
+
+- Built for game build 25465256, the public release.
+- Deploys the asset bridge (AshAssetBridge.dll) beside the loader, so a mod's own textures, meshes and sounds can load through the Hub.
+
 ## What this adds up to
 
 ### The mod-facing API has been additive-only across every shipped loader.
@@ -98,6 +106,6 @@ Migrated to game build 24493575 (beta). This is the live lane.
 
 ---
 
-Derived from the `shipped/hub-*` release tags and the loader source on 2026-08-18.
+Derived from the `shipped/hub-*` release tags and the loader source on 2026-10-07.
 
 — The AshForge Team

@@ -3,6 +3,10 @@
 A walkthrough of `template/MyFirstMod`. Copy that folder somewhere of your own first — don't edit it in
 place, so you always have a clean copy to come back to.
 
+You build one mod folder, and it works both ways a player can install it: in the game's own `Mods` folder,
+enabled once in the in-game **Mods** menu, or through the AshForge Hub. Your code doesn't need to know which
+route started it.
+
 ---
 
 ## The three files
@@ -19,19 +23,33 @@ MyFirstMod/
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <Import Project="..\..\build\AshForge.Mod.props" />
+
   <PropertyGroup>
-    <AssemblyName>MyFirstMod</AssemblyName>
-    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <!-- <AshForgeGameDir>D:\Games\Ascent of Ashes</AshForgeGameDir> -->
+    <!-- <AshForgeDeploy>false</AshForgeDeploy> -->
   </PropertyGroup>
 </Project>
 ```
 
-The `Import` does all the work: finds your game install, references the loader and the game's assemblies,
-and deploys the built mod into your mods folder. **Fix the relative path** to wherever you put the SDK,
-or copy the SDK's `build/` folder alongside your project.
+The `Import` does all the work: it finds your game, references the game's assemblies and Harmony, compiles
+the SDK's kit into your mod, generates the entry point, builds the AshForge adapter, and lays out and
+deploys the finished mod. **Fix the relative path** to wherever you put the SDK. Keep the import first.
 
-`net6.0` is not a preference. The game is .NET 6 and your assembly is loaded into its process — a
-different target framework will not load.
+What the SDK sets for you — leave these alone:
+
+- **Target framework `net8.0`.** The game runs on .NET 8 and your assembly is loaded into its process.
+- **Assembly name `<Project>.Native`.** Your code is built as `MyFirstMod.Native.dll`. Set `AssemblyName`
+  yourself without the `.Native` suffix and the build stops with an error.
+- **Folder name = project name.** The game identifies a mod by its **folder name**, so keep it the same
+  from release to release. To decouple it from the project name, set `<AshForgeModFolder>` — and then never
+  change that either.
+
+The two commented lines are the knobs you may need: `AshForgeGameDir` if the build can't find your install,
+and `AshForgeDeploy` set to `false` to build without copying into the game's `Mods` folder.
 
 ### mod.json
 
@@ -40,29 +58,38 @@ different target framework will not load.
   "id": "yourname.myfirstmod",
   "name": "My First Mod",
   "version": "0.1.0",
+  "author": "Your Name",
+  "description": "A starting point. Says hello in the log and adds one setting.",
   "loadOrder": 100,
   "enabled": true
 }
 ```
 
-**Change the `id` to something of your own** before you build anything real. It keys your settings and
-your save data, and changing it later silently wipes both for anyone who installed your mod.
+**Change the `id` to something of your own** before you build anything real. It keys your settings, your
+save data and your log file, and changing it later silently wipes the first two for anyone who installed
+your mod. The build reads `id`, `name`, `version` and `author` from here and writes the game's `About.xml`
+from them, so you never edit `About.xml` by hand.
 
 Full field reference: [mod.json](02-mod-json.md).
 
 ### ModMain.cs
 
 ```csharp
-public sealed class ModMain : IAshForgeModContext
+using System.Globalization;
+using AshForge.NativeKit;
+
+public sealed class ModMain : INativeMod
 {
-    public void Init(ModContext ctx) { ... }
+    private ISetting _enabled;
+    private int _ticks;
+
+    public void Start(IModHost2 host) { ... }
 }
 ```
 
-There is no registration step anywhere. The loader scans your assembly, finds the type implementing the
-interface, constructs it, and calls `Init` once. That's the whole contract.
-
-It must be **public**, **non-abstract**, and have a **parameterless constructor**.
+There is no registration step. The SDK finds the one class in your mod that implements `INativeMod`,
+constructs it, and calls `Start` once per game session. **Exactly one** class may implement it — with none,
+or with two, nothing is started and the log says why.
 
 ---
 
@@ -76,53 +103,86 @@ You should see:
 
 ```
 AshForge SDK: game at C:\...\Ascent of Ashes
-AshForge SDK: deployed to C:\Users\you\AshForgeModLoader\mods\MyFirstMod
+AshForge SDK: packaged My First Mod 0.1.0 at ...\bin\Release\net8.0\mod\MyFirstMod
+AshForge SDK: deployed to C:\...\Ascent of Ashes\Mods\MyFirstMod — enable 'My First Mod' once in the game's Mods menu.
 ```
 
 Then:
 
-1. **Turn off signature checking** — Hub → Manage Mods → ▸ Advanced. Your mod isn't signed, so the loader
-   will refuse it otherwise and you'll see nothing at all.
-   ([Testing and debugging](07-testing-and-debugging.md))
-2. Launch the game.
-3. Check `%TEMP%\myfirstmod.log`.
+1. Launch the game.
+2. Open the **Mods** menu and enable **My First Mod**. A player does this once.
+3. Start or load a colony, and check `%TEMP%\yourname.myfirstmod.log`.
 
-You should find `hello from yourname.myfirstmod`.
+You should find `started through the game mod loader.` If the game was running when you built, the deploy
+was skipped with a warning — close the game and build again.
 
-If not, open `%TEMP%\ashloader.log` and look for your id — the loader records exactly what it did with
-your mod and why.
+Testing through the AshForge Hub as well is covered in [Testing and debugging](07-testing-and-debugging.md).
 
 ---
 
 ## What the template demonstrates
 
-**A setting.** Declared once in `Init`, drawn for the player under ESC ▸ Mod Settings:
+**A log.**
 
 ```csharp
-_greetOnLoad = ctx.AddToggle("greet_on_load", "Say hello in the log", true);
+var log = ModEntry.Logger(host.ModId, "My First Mod");
+```
+
+Writes to `%TEMP%\<mod id>.log` and to the game's own log. The game's log is the only one a player without
+the Hub has, so it is what they will send you.
+
+**A setting.**
+
+```csharp
+_enabled = host.AddToggle("enabled", "Count frames", true,
+    tooltip: "An example toggle. Turn it off and the counter stops.");
 ...
-if (_greetOnLoad.Bool) Log("greeting enabled");
+if (_enabled.Bool) _ticks++;
 ```
 
 Keep the handle; read `.Bool` when you need it. Don't copy the value into a field — the player can change
-it while the game is running.
+it while the game is running. Settings appear in the settings screen of the **AshForge Tools** mod when
+Tools is installed, on either route.
 
 **Periodic work.**
 
 ```csharp
-ctx.ScheduleEvery(600, () => Log("still here"));
+host.ScheduleEvery(600, () => { if (_enabled.Bool) _ticks++; });
 ```
 
-Prefer this over doing work in `OnGameTick`. The loader staggers each mod's periodic work across
-different frames so mods don't all wake on the same one.
+Every 600 **frames** — roughly ten seconds, and it keeps running while the game is paused. For anything tied
+to the game's own time, read the game clock instead
+([Rules that bite](04-rules-that-bite.md#-never-count-frames-to-measure-game-time)).
+
+**Save data.**
+
+```csharp
+host.RegisterSaveData(host.ModId, 1,
+    save: () => _ticks.ToString(CultureInfo.InvariantCulture),
+    load: s => _ticks = s.Existed && int.TryParse(s.Data, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) ? n : 0);
+```
+
+Kept in a file beside the save, never inside it, so removing your mod can never stop a save from loading.
+The key is shared by every mod in the save — use your mod id, as here. `Existed == false` means a fresh
+colony: reset to defaults.
 
 **A dev command.**
 
 ```csharp
-ctx.AddDevCommand("Say hello now", () => Log("hello, on demand"));
+host.AddDevCommand(null, "Say hello", () => log($"hello — {_ticks} ticks counted"));
 ```
 
-Invisible to players, so you can leave it in a shipped mod — no strip-before-release step.
+A button in the AshForge Tools console, shown only in a dev session, so you can leave it in a release.
+A `null` category groups it under your mod id.
+
+**Harmony, commented out.**
+
+```csharp
+//   new HarmonyLib.Harmony(host.ModId).PatchAll(typeof(ModMain).Assembly);
+```
+
+Harmony is referenced and shipped for you. Read [Content, decs and Harmony](05-content-and-harmony.md)
+before you uncomment it — one rule there decides whether your patch works.
 
 ---
 
@@ -131,6 +191,6 @@ Invisible to players, so you can leave it in a shipped mod — no strip-before-r
 Change something small and rebuild — add a slider, log a game value, react to an event. Then:
 
 - **[Rules that bite](04-rules-that-bite.md)** — before you write anything timed, anything that touches
-  saves, or anything using a loader API. This is the page that saves you a bad week.
-- [Lifecycle and the API](03-lifecycle-and-api.md) — everything `ModContext` offers.
+  saves, or any Harmony patch. This is the page that saves you a bad week.
+- [Lifecycle and the API](03-lifecycle-and-api.md) — everything `IModHost2` offers.
 - [Content, decs and Harmony](05-content-and-harmony.md) — changing the game itself.
