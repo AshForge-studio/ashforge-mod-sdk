@@ -2,14 +2,19 @@
 <!--
   AshForge Mod SDK — build glue.
 
-  Import this at the TOP of your mod's .csproj and you get, without writing a single <Reference>:
-    • the AshForge loader API          (AshLoader.dll, shipped in this SDK under lib/)
-    • the game's own assemblies        (Ascent of Ashes.dll, GodotSharp.dll, 0Harmony.dll)
-    • a `dotnet build` that drops your mod straight into your mods folder, ready to load
+  Import this at the TOP of your mod's .csproj. You write ONE project with ONE class that implements
+  AshForge.NativeKit.INativeMod. A `dotnet build` turns it into a mod that works both ways:
 
-  It finds your game install itself. It does NOT hardcode a Steam path — plenty of people keep their
-  library on another drive, and a hardcoded path is exactly the bug that makes a tool "just not work"
-  for a stranger with no way to tell why.
+    • extracted into the game's own Mods folder and enabled in the in-game Mods menu — nothing else needed;
+    • installed through the AshForge Hub, where it also gets signing, updates and the loader's extras.
+
+  What the build does for you:
+    • references the game's assemblies and Harmony (shipped in this SDK under lib/native/)
+    • compiles NativeKit into your mod — settings, ticks, save data, events and dev commands that work on
+      both routes (build/kit/; source, never a shared dll)
+    • generates your mod's entry point and the bootstrap dec the game's mod loader needs to start it
+    • builds a small AshForge adapter (<YourMod>.Loader.dll) — the only part that references the loader
+    • lays out the finished mod and copies it into the game's Mods folder
 
   ── Overriding detection ────────────────────────────────────────────────────────────────────────
   If your install can't be found (or you keep more than one), set either of these and detection is
@@ -25,15 +30,36 @@
   <PropertyGroup>
     <_AshForgeSdkRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</_AshForgeSdkRoot>
     <AshForgeSdkLib Condition="'$(AshForgeSdkLib)' == ''">$(_AshForgeSdkRoot)lib\</AshForgeSdkLib>
+    <_AshForgeKit>$(_AshForgeSdkRoot)build\kit\</_AshForgeKit>
+    <_AshForgeAdapterSrc>$(_AshForgeSdkRoot)build\adapter\</_AshForgeAdapterSrc>
 
-    <!-- The game is .NET 6. Matching it is not optional: the loader runs your assembly inside the
-         game's own AssemblyLoadContext, so a different target framework will not load. -->
-    <TargetFramework Condition="'$(TargetFramework)' == ''">net6.0</TargetFramework>
+    <!-- The game runs on .NET 8, and your mod is loaded into its process. -->
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net8.0</TargetFramework>
+
+    <!-- ★ Your mod's code is built as <Project>.Native.dll. The ".Native" suffix is not decoration: an
+         assembly name must never be one an earlier build of your mod shipped under a different layout,
+         or the game's mod loader finds two different assemblies of one name and resets the player's
+         whole mod list. Keep it. -->
+    <AssemblyName Condition="'$(AssemblyName)' == '' Or '$(AssemblyName)' == '$(MSBuildProjectName)'">$(MSBuildProjectName).Native</AssemblyName>
+    <RootNamespace Condition="'$(RootNamespace)' == ''">$(MSBuildProjectName)</RootNamespace>
+
+    <!-- The mod's folder name. The game identifies a mod by its folder, so this must not change between
+         releases. -->
+    <AshForgeModFolder Condition="'$(AshForgeModFolder)' == ''">$(MSBuildProjectName)</AshForgeModFolder>
+
+    <!-- Written into About.xml. The game shows a mod built for another version as possibly incompatible. -->
+    <AshForgeGameVersion Condition="'$(AshForgeGameVersion)' == ''">0.2.0-RC4</AshForgeGameVersion>
 
     <!-- Mods are libraries loaded by the game; never copy the game's own DLLs next to your output. -->
     <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">false</CopyLocalLockFileAssemblies>
     <EnableDefaultNoneItems Condition="'$(EnableDefaultNoneItems)' == ''">false</EnableDefaultNoneItems>
+    <GenerateDependencyFile Condition="'$(GenerateDependencyFile)' == ''">false</GenerateDependencyFile>
   </PropertyGroup>
+
+  <!-- NativeKit, compiled into your mod. -->
+  <ItemGroup>
+    <Compile Include="$(_AshForgeKit)*.cs" Link="AshForge\NativeKit\%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
 
   <!-- ── Locate the game ─────────────────────────────────────────────────────────────────────────
        Tiers, in order, mirroring the Hub's own detector:
@@ -65,14 +91,10 @@
 
         var roots = new List<string>();
 
-        // 1 + 2: explicit override, either form — always wins.
         string hint = Hint;
         if (string.IsNullOrEmpty(hint)) hint = Environment.GetEnvironmentVariable("ASHFORGE_GAME_DIR");
         if (!string.IsNullOrEmpty(hint)) roots.Add(hint);
 
-        // 3: Steam. SteamPath is the primary library; libraryfolders.vdf lists every other one the
-        //    user has added (second drive, external, moved install). Skipping the vdf is the single
-        //    most common reason a tool "just can't find the game" for a stranger.
         if (!string.IsNullOrEmpty(SteamPath))
         {
             string steam = SteamPath.Replace('/', '\\').Trim();
@@ -87,7 +109,6 @@
             catch { /* unreadable vdf is not fatal — keep probing the rest */ }
         }
 
-        // 4: the usual suspects.
         foreach (string b in new[] { @"C:\Program Files (x86)\Steam", @"C:\Program Files\Steam", @"D:\Steam" })
             roots.Add(Path.Combine(b, "steamapps", "common", Leaf));
 
@@ -106,8 +127,47 @@
     </Task>
   </UsingTask>
 
+  <!-- Reads id/name/version/author out of mod.json — the one place your mod's identity is written. -->
+  <UsingTask TaskName="AshForgeReadModJson"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Path ParameterType="System.String" Required="true" />
+      <Id ParameterType="System.String" Output="true" />
+      <Name ParameterType="System.String" Output="true" />
+      <Version ParameterType="System.String" Output="true" />
+      <Author ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string json = File.ReadAllText(Path);
+        System.Func<string, string> field = key =>
+        {
+            Match m = Regex.Match(json, "\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+            return m.Success ? Regex.Unescape(m.Groups[1].Value) : "";
+        };
+        Id = field("id"); Name = field("name"); Version = field("version"); Author = field("author");
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <!-- Is the game running? Deploying then would fail half-way on a locked dll and leave a broken mod folder. -->
+  <UsingTask TaskName="AshForgeGameRunning"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Running ParameterType="System.Boolean" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        Running = System.Diagnostics.Process.GetProcessesByName("aoa").Length > 0;
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
   <Target Name="AshForgeResolveGame" BeforeTargets="ResolveAssemblyReferences;BeforeBuild">
-    <!-- MSBuild reads this natively; a missing key yields empty rather than failing. -->
     <PropertyGroup>
       <_AshForgeSteamPath>$([MSBuild]::GetRegistryValueFromView('HKEY_CURRENT_USER\Software\Valve\Steam', 'SteamPath', null, RegistryView.Registry64, RegistryView.Registry32))</_AshForgeSteamPath>
     </PropertyGroup>
@@ -118,74 +178,232 @@
 
     <PropertyGroup>
       <AshForgeGameData>$(AshForgeGameDir)\data_Ascent of Ashes_windows_x86_64</AshForgeGameData>
-      <!-- Where a built mod goes. Override AshForgeModsDir if you keep your mods elsewhere. -->
-      <AshForgeModsDir Condition="'$(AshForgeModsDir)' == ''">$(USERPROFILE)\AshForgeModLoader\mods</AshForgeModsDir>
-      <AshForgeModId Condition="'$(AshForgeModId)' == ''">$(AssemblyName)</AshForgeModId>
+      <!-- Where a built mod is copied: the game's own Mods folder, which every player has. -->
+      <AshForgeModsDir Condition="'$(AshForgeModsDir)' == ''">$(AshForgeGameDir)\Mods</AshForgeModsDir>
     </PropertyGroup>
 
     <Error Condition="'$(AshForgeGameDir)' == ''"
            Text="Couldn't find your Ascent of Ashes install. Set &lt;AshForgeGameDir&gt; in your .csproj, or the ASHFORGE_GAME_DIR environment variable, to the folder containing aoa.exe." />
     <Error Condition="!Exists('$(AshForgeGameData)')"
            Text="Found '$(AshForgeGameDir)' but it has no data_Ascent of Ashes_windows_x86_64 folder — that isn't an Ascent of Ashes install, or the game has changed layout." />
-    <Error Condition="!Exists('$(AshForgeSdkLib)AshLoader.dll')"
-           Text="AshLoader.dll is missing from '$(AshForgeSdkLib)'. This SDK is incomplete — re-download it." />
+    <Error Condition="!Exists('$(AshForgeSdkLib)AshLoader.dll') Or !Exists('$(AshForgeSdkLib)native\0Harmony.dll')"
+           Text="This SDK is incomplete (lib/AshLoader.dll or lib/native/0Harmony.dll is missing) — re-download it." />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\mod.json')"
+           Text="No mod.json next to your .csproj. It holds your mod's id, name, version and author; copy the one from template/MyFirstMod." />
+    <Error Condition="!$(AssemblyName.EndsWith('.Native'))"
+           Text="AssemblyName must end in '.Native' (it is '$(AssemblyName)'). Remove AssemblyName from your .csproj and the SDK sets it." />
+
+    <AshForgeReadModJson Path="$(MSBuildProjectDirectory)\mod.json">
+      <Output TaskParameter="Id" PropertyName="AshForgeModId" />
+      <Output TaskParameter="Name" PropertyName="AshForgeModName" />
+      <Output TaskParameter="Version" PropertyName="AshForgeModVersion" />
+      <Output TaskParameter="Author" PropertyName="AshForgeModAuthor" />
+    </AshForgeReadModJson>
+    <Error Condition="'$(AshForgeModId)' == '' Or '$(AshForgeModName)' == '' Or '$(AshForgeModVersion)' == ''"
+           Text="mod.json needs at least &quot;id&quot;, &quot;name&quot; and &quot;version&quot;." />
 
     <Message Importance="high" Text="AshForge SDK: game at $(AshForgeGameDir)" />
 
-    <!-- Reference-only, every one of them. These assemblies already exist at runtime: the game ships
-         its own, and the loader is deployed next to it. Copying them beside your mod would put a
-         SECOND copy of the game's types in the process — Harmony would then patch a dead copy and
-         your patches would silently do nothing. -->
+    <!-- Reference-only, every one of them. These assemblies already exist at runtime. Copying the game's
+         beside your mod would put a SECOND copy of its types in the process — Harmony would then patch a
+         dead copy and your patches would silently do nothing. 0Harmony is the exception: the game does not
+         ship it, so the packaging step below puts this SDK's copy in your mod's Assembly/ folder. -->
     <ItemGroup>
-      <ReferencePath Include="$(AshForgeSdkLib)AshLoader.dll">
-        <Private>false</Private>
-      </ReferencePath>
-      <ReferencePath Include="$(AshForgeGameData)\Ascent of Ashes.dll">
-        <Private>false</Private>
-      </ReferencePath>
-      <ReferencePath Include="$(AshForgeGameData)\GodotSharp.dll">
-        <Private>false</Private>
-      </ReferencePath>
-      <ReferencePath Include="$(AshForgeGameData)\0Harmony.dll">
-        <Private>false</Private>
-      </ReferencePath>
-      <!-- dec is the game's data/definition library; you only need it if you declare Dec types. -->
-      <ReferencePath Condition="Exists('$(AshForgeGameData)\dec.dll')" Include="$(AshForgeGameData)\dec.dll">
-        <Private>false</Private>
-      </ReferencePath>
+      <ReferencePath Include="$(AshForgeGameData)\Ascent of Ashes.dll"><Private>false</Private></ReferencePath>
+      <ReferencePath Include="$(AshForgeGameData)\GodotSharp.dll"><Private>false</Private></ReferencePath>
+      <ReferencePath Include="$(AshForgeGameData)\dec.dll"><Private>false</Private></ReferencePath>
+      <ReferencePath Include="$(AshForgeSdkLib)native\0Harmony.dll"><Private>false</Private></ReferencePath>
     </ItemGroup>
   </Target>
 
-  <!-- ── Deploy ──────────────────────────────────────────────────────────────────────────────────
-       After a successful build, lay the mod out the way the loader expects:
-           mods/<id>/mod.json
-           mods/<id>/Assemblies/<you>.dll
-           mods/<id>/Decs/...            (copied if you have a Decs folder)
-       Turn it off with -p:AshForgeDeploy=false if you'd rather copy by hand. -->
+  <!-- ── Generated entry point ───────────────────────────────────────────────────────────────────
+       The game's mod loader calls nothing in a mod's assembly. It starts code only through a dec: the
+       Bootstrap below, declared in Dec/Bootstrap.xml, runs when the game reads definitions. The AshForge
+       adapter reaches the same Entry by reflection. Both end in ModEntry.Run, which starts your INativeMod
+       once. -->
+  <Target Name="AshForgeGenerateEntry" BeforeTargets="CoreCompile" DependsOnTargets="AshForgeResolveGame">
+    <PropertyGroup>
+      <_AshForgeSafe>$([System.Text.RegularExpressions.Regex]::Replace('$(AshForgeModFolder)', '[^A-Za-z0-9_]', '_'))</_AshForgeSafe>
+      <_AshForgeSafe Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(_AshForgeSafe)', '^[0-9]'))">_$(_AshForgeSafe)</_AshForgeSafe>
+      <AshForgeEntryNamespace>AshForgeGenerated.$(_AshForgeSafe)</AshForgeEntryNamespace>
+      <_AshForgeEntryFile>$(IntermediateOutputPath)AshForgeEntry.g.cs</_AshForgeEntryFile>
+      <_AshForgeIdLiteral>$(AshForgeModId.Replace('\', '\\').Replace('"', '\"'))</_AshForgeIdLiteral>
+      <_AshForgeNameLiteral>$(AshForgeModName.Replace('\', '\\').Replace('"', '\"'))</_AshForgeNameLiteral>
+    </PropertyGroup>
+    <ItemGroup>
+      <_AshForgeEntryLine Include="// Generated by the AshForge Mod SDK. Do not edit: it is rewritten on every build." />
+      <_AshForgeEntryLine Include="namespace $(AshForgeEntryNamespace)" />
+      <_AshForgeEntryLine Include="{" />
+      <_AshForgeEntryLine Include="    public static class AshForgeEntry" />
+      <_AshForgeEntryLine Include="    {" />
+      <_AshForgeEntryLine Include="        public const string ModId = &quot;$(_AshForgeIdLiteral)&quot;%3B" />
+      <_AshForgeEntryLine Include="        public const string DisplayName = &quot;$(_AshForgeNameLiteral)&quot;%3B" />
+      <_AshForgeEntryLine Include="        public static void ApplyAll(string route) =&gt; global::AshForge.NativeKit.ModEntry.Run(typeof(AshForgeEntry).Assembly, ModId, DisplayName, route, null)%3B" />
+      <_AshForgeEntryLine Include="        public static void StartFromLoader(global::System.Collections.Generic.Dictionary&lt;string, object&gt; spec) =&gt; global::AshForge.NativeKit.ModEntry.Run(typeof(AshForgeEntry).Assembly, ModId, DisplayName, &quot;AshForge loader&quot;, spec)%3B" />
+      <_AshForgeEntryLine Include="    }" />
+      <_AshForgeEntryLine Include="    public class AshForgeBootstrap : global::Dec.Dec" />
+      <_AshForgeEntryLine Include="    {" />
+      <_AshForgeEntryLine Include="        public override void PostLoad(global::System.Action&lt;string&gt; reporter) =&gt; AshForgeEntry.ApplyAll(&quot;game mod loader&quot;)%3B" />
+      <_AshForgeEntryLine Include="    }" />
+      <_AshForgeEntryLine Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_AshForgeEntryFile)" Lines="@(_AshForgeEntryLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(_AshForgeEntryFile)" />
+      <FileWrites Include="$(_AshForgeEntryFile)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ── The AshForge adapter ────────────────────────────────────────────────────────────────────
+       <YourMod>.Loader.dll — the only assembly of your mod that references the AshForge loader, and the
+       only file the loader reads from Assemblies/. It names nothing from your mod's code: it hands your mod
+       the loader's services by reflection, so no build of one can ever break the other. Compiled straight
+       from build/adapter/ with the same references as your mod plus the loader. -->
+  <Target Name="AshForgeBuildAdapter" AfterTargets="CoreCompile" Condition="'$(AshForgeAdapter)' != 'false'"
+          Inputs="$(MSBuildAllProjects);@(IntermediateAssembly)" Outputs="$(IntermediateOutputPath)$(AshForgeModFolder).Loader.dll">
+    <PropertyGroup>
+      <_AshForgeAdapterFile>$(IntermediateOutputPath)AshForgeAdapter.g.cs</_AshForgeAdapterFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_AshForgeAdapterLine Include="// Generated by the AshForge Mod SDK. Do not edit: it is rewritten on every build." />
+      <_AshForgeAdapterLine Include="namespace $(AshForgeEntryNamespace).Loader" />
+      <_AshForgeAdapterLine Include="{" />
+      <_AshForgeAdapterLine Include="    public sealed class AshForgeAdapter : global::AshForge.NativeAdapter.NativeLoaderAdapter" />
+      <_AshForgeAdapterLine Include="    {" />
+      <_AshForgeAdapterLine Include="        protected override string ModId =&gt; &quot;$(_AshForgeIdLiteral)&quot;%3B" />
+      <_AshForgeAdapterLine Include="        protected override string DisplayName =&gt; &quot;$(_AshForgeNameLiteral)&quot;%3B" />
+      <_AshForgeAdapterLine Include="        protected override string CoreAssembly =&gt; &quot;$(AssemblyName)&quot;%3B" />
+      <_AshForgeAdapterLine Include="        protected override string CoreType =&gt; &quot;$(AshForgeEntryNamespace).AshForgeEntry&quot;%3B" />
+      <_AshForgeAdapterLine Include="        protected override string LogFile =&gt; &quot;$(_AshForgeIdLiteral).log&quot;%3B" />
+      <_AshForgeAdapterLine Include="        protected override void Start(global::System.Reflection.Assembly core) =&gt; global::AshForge.NativeKit.LoaderSpec.StartCore(core, CoreType, Context, DisplayName, Log)%3B" />
+      <_AshForgeAdapterLine Include="    }" />
+      <_AshForgeAdapterLine Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_AshForgeAdapterFile)" Lines="@(_AshForgeAdapterLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <_AshForgeAdapterSources Include="$(_AshForgeAdapterSrc)*.cs;$(_AshForgeAdapterFile)" />
+      <_AshForgeAdapterRefs Include="@(ReferencePathWithRefAssemblies)" Exclude="$(AshForgeSdkLib)native\0Harmony.dll" />
+      <_AshForgeAdapterRefs Include="$(AshForgeSdkLib)AshLoader.dll" />
+    </ItemGroup>
+    <Csc Sources="@(_AshForgeAdapterSources)"
+         References="@(_AshForgeAdapterRefs)"
+         OutputAssembly="$(IntermediateOutputPath)$(AshForgeModFolder).Loader.dll"
+         TargetType="library"
+         NoStandardLib="true"
+         NoConfig="true"
+         LangVersion="latest"
+         Optimize="true"
+         Deterministic="true"
+         EmitDebugInformation="false"
+         DisabledWarnings="1701;1702;CS8019"
+         ToolExe="$(CscToolExe)"
+         ToolPath="$(CscToolPath)"
+         UseSharedCompilation="$(UseSharedCompilation)" />
+    <ItemGroup>
+      <FileWrites Include="$(_AshForgeAdapterFile);$(IntermediateOutputPath)$(AshForgeModFolder).Loader.dll" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ── Package ─────────────────────────────────────────────────────────────────────────────────
+       After a successful build, lay out the finished mod in bin\...\mod\<YourMod>\:
+
+           About.xml                     the game's mod manifest (from mod.json)
+           Assembly/<YourMod>.Native.dll your mod — what the game's mod loader runs
+           Assembly/0Harmony.dll         Harmony 2.3.3 (the game does not ship it)
+           Dec/Bootstrap.xml             starts your mod in the game's mod loader
+           Dec/*  and  Decs/*            your content, in both: the game reads Dec/, the AshForge loader Decs/
+           Assemblies/<YourMod>.Loader.dll  the AshForge adapter — the only file the loader reads
+           mod.json, Parcels/, Assets/, THIRD-PARTY-NOTICES.txt
+
+       then copy it into the game's Mods folder (AshForgeDeploy=false to skip). Enable it once in the in-game
+       Mods menu. `dotnet build -t:AshForgePack` also zips it for release. -->
   <PropertyGroup>
     <AshForgeDeploy Condition="'$(AshForgeDeploy)' == ''">true</AshForgeDeploy>
   </PropertyGroup>
 
-  <Target Name="AshForgeDeployMod" AfterTargets="Build" Condition="'$(AshForgeDeploy)' == 'true'">
+  <Target Name="AshForgePackageMod" AfterTargets="Build" DependsOnTargets="AshForgeResolveGame;AshForgeGenerateEntry">
     <PropertyGroup>
-      <_AshForgeOut>$(AshForgeModsDir)\$(AshForgeModId)</_AshForgeOut>
+      <AshForgePackageDir>$(MSBuildProjectDirectory)\$(OutputPath)mod\$(AshForgeModFolder)</AshForgePackageDir>
+      <_AshForgeXmlName>$(AshForgeModName.Replace('&amp;', '&amp;amp;').Replace('&lt;', '&amp;lt;').Replace('&gt;', '&amp;gt;'))</_AshForgeXmlName>
+      <_AshForgeXmlAuthor>$(AshForgeModAuthor.Replace('&amp;', '&amp;amp;').Replace('&lt;', '&amp;lt;').Replace('&gt;', '&amp;gt;'))</_AshForgeXmlAuthor>
+      <_AshForgeXmlVersion>$(AshForgeModVersion.Replace('&amp;', '&amp;amp;').Replace('&lt;', '&amp;lt;').Replace('&gt;', '&amp;gt;'))</_AshForgeXmlVersion>
+      <_AshForgeHarmonyNotice>Assembly/0Harmony.dll is Harmony 2.3.3 by Andreas Pardeike (https://github.com/pardeike/Harmony), used under the MIT License. Copyright (c) 2017 Andreas Pardeike.</_AshForgeHarmonyNotice>
     </PropertyGroup>
-
-    <MakeDir Directories="$(_AshForgeOut)\Assemblies" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(_AshForgeOut)\Assemblies" />
-    <Copy Condition="Exists('$(MSBuildProjectDirectory)\mod.json')"
-          SourceFiles="$(MSBuildProjectDirectory)\mod.json" DestinationFolder="$(_AshForgeOut)" />
+    <RemoveDir Directories="$(AshForgePackageDir)" />
 
     <ItemGroup>
-      <_AshForgeDecs Include="$(MSBuildProjectDirectory)\Decs\**\*" />
+      <_AshForgeContent Include="$(MSBuildProjectDirectory)\Decs\**\*" />
+      <_AshForgeParcels Include="$(MSBuildProjectDirectory)\Parcels\**\*" />
+      <_AshForgeAssets Include="$(MSBuildProjectDirectory)\Assets\**\*" />
+      <_AshForgeAbout Include="&lt;ModInfo&gt;" />
+      <_AshForgeAbout Include="  &lt;Name&gt;$(_AshForgeXmlName)&lt;/Name&gt;" />
+      <_AshForgeAbout Include="  &lt;Author&gt;$(_AshForgeXmlAuthor)&lt;/Author&gt;" />
+      <_AshForgeAbout Include="  &lt;ModVersion&gt;$(_AshForgeXmlVersion)&lt;/ModVersion&gt;" />
+      <_AshForgeAbout Include="  &lt;GameVersion&gt;$(AshForgeGameVersion)&lt;/GameVersion&gt;" />
+      <_AshForgeAbout Include="&lt;/ModInfo&gt;" />
+      <_AshForgeBoot Include="&lt;Decs&gt;" />
+      <_AshForgeBoot Include="    &lt;!-- Generated by the AshForge Mod SDK. Starts this mod in the game's own mod loader. --&gt;" />
+      <_AshForgeBoot Include="    &lt;$(AshForgeEntryNamespace).AshForgeBootstrap decName=&quot;$(_AshForgeSafe)AshForgeBootstrap&quot; /&gt;" />
+      <_AshForgeBoot Include="&lt;/Decs&gt;" />
     </ItemGroup>
-    <Copy Condition="'@(_AshForgeDecs)' != ''"
-          SourceFiles="@(_AshForgeDecs)"
-          DestinationFiles="@(_AshForgeDecs->'$(_AshForgeOut)\Decs\%(RecursiveDir)%(Filename)%(Extension)')" />
 
-    <Message Importance="high" Text="AshForge SDK: deployed to $(_AshForgeOut)" />
-    <Warning Condition="!Exists('$(MSBuildProjectDirectory)\mod.json')"
-             Text="No mod.json next to your .csproj — the loader will fall back to the folder name for your mod's id and will not read your load order or capabilities." />
+    <WriteLinesToFile File="$(AshForgePackageDir)\About.xml" Lines="@(_AshForgeAbout)" Overwrite="true" />
+    <Copy SourceFiles="@(IntermediateAssembly->'$(TargetDir)%(Filename)%(Extension)')" DestinationFolder="$(AshForgePackageDir)\Assembly" />
+    <Copy SourceFiles="$(AshForgeSdkLib)native\0Harmony.dll" DestinationFolder="$(AshForgePackageDir)\Assembly" />
+    <WriteLinesToFile File="$(AshForgePackageDir)\Dec\Bootstrap.xml" Lines="@(_AshForgeBoot)" Overwrite="true" />
+    <Copy SourceFiles="@(_AshForgeContent)" DestinationFiles="@(_AshForgeContent->'$(AshForgePackageDir)\Dec\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(_AshForgeContent)" DestinationFiles="@(_AshForgeContent->'$(AshForgePackageDir)\Decs\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(_AshForgeParcels)" DestinationFiles="@(_AshForgeParcels->'$(AshForgePackageDir)\Parcels\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(_AshForgeAssets)" DestinationFiles="@(_AshForgeAssets->'$(AshForgePackageDir)\Assets\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy Condition="'$(AshForgeAdapter)' != 'false'" SourceFiles="$(IntermediateOutputPath)$(AshForgeModFolder).Loader.dll" DestinationFolder="$(AshForgePackageDir)\Assemblies" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\mod.json" DestinationFolder="$(AshForgePackageDir)" />
+    <Copy Condition="Exists('$(MSBuildProjectDirectory)\CHANGELOG.md')" SourceFiles="$(MSBuildProjectDirectory)\CHANGELOG.md" DestinationFolder="$(AshForgePackageDir)" />
+    <WriteLinesToFile File="$(AshForgePackageDir)\THIRD-PARTY-NOTICES.txt" Lines="$(_AshForgeHarmonyNotice)" Overwrite="true" />
+
+    <Message Importance="high" Text="AshForge SDK: packaged $(AshForgeModName) $(AshForgeModVersion) at $(AshForgePackageDir)" />
+    <Warning Condition="'@(_AshForgeAssets)' != ''"
+             Text="Assets/ ships with your mod, but only the AshForge loader can serve a mod's own art. Installed through the game's Mods folder alone, references to it will not resolve." />
+
+    <!-- Deploy: replace the copy in the game's Mods folder. Only a folder this SDK wrote (it carries the
+         same mod.json id) is ever replaced. -->
+    <PropertyGroup>
+      <_AshForgeDeployDir>$(AshForgeModsDir)\$(AshForgeModFolder)</_AshForgeDeployDir>
+      <_AshForgeDeployOk>true</_AshForgeDeployOk>
+      <_AshForgeDeployOk Condition="Exists('$(_AshForgeDeployDir)') And !Exists('$(_AshForgeDeployDir)\mod.json')">false</_AshForgeDeployOk>
+      <_AshForgeExistingJson Condition="Exists('$(_AshForgeDeployDir)\mod.json')">$([System.IO.File]::ReadAllText('$(_AshForgeDeployDir)\mod.json'))</_AshForgeExistingJson>
+      <_AshForgeDeployOk Condition="'$(_AshForgeExistingJson)' != '' And !$(_AshForgeExistingJson.Contains('&quot;$(AshForgeModId)&quot;'))">false</_AshForgeDeployOk>
+      <!-- A folder holding this mod's own dll is ours even if an interrupted deploy lost its mod.json. -->
+      <_AshForgeDeployOk Condition="Exists('$(_AshForgeDeployDir)\Assembly\$(AssemblyName).dll')">true</_AshForgeDeployOk>
+    </PropertyGroup>
+    <AshForgeGameRunning Condition="'$(AshForgeDeploy)' == 'true'">
+      <Output TaskParameter="Running" PropertyName="_AshForgeGameRunning" />
+    </AshForgeGameRunning>
+    <Warning Condition="'$(AshForgeDeploy)' == 'true' And '$(_AshForgeGameRunning)' == 'True'"
+             Text="Not deploying: Ascent of Ashes is running and holds your mod's files open. Close the game and build again. (The packaged mod is ready at $(AshForgePackageDir).)" />
+    <PropertyGroup>
+      <_AshForgeDeployOk Condition="'$(_AshForgeGameRunning)' == 'True'">skip</_AshForgeDeployOk>
+    </PropertyGroup>
+    <Warning Condition="'$(AshForgeDeploy)' == 'true' And '$(_AshForgeDeployOk)' == 'false'"
+             Text="Not deploying: '$(_AshForgeDeployDir)' exists and is not this mod (no mod.json with id '$(AshForgeModId)'). Rename your project or set AshForgeModFolder." />
+    <RemoveDir Condition="'$(AshForgeDeploy)' == 'true' And '$(_AshForgeDeployOk)' == 'true'" Directories="$(_AshForgeDeployDir)" />
+    <ItemGroup>
+      <_AshForgePackaged Include="$(AshForgePackageDir)\**\*" />
+    </ItemGroup>
+    <Copy Condition="'$(AshForgeDeploy)' == 'true' And '$(_AshForgeDeployOk)' == 'true'"
+          SourceFiles="@(_AshForgePackaged)" DestinationFiles="@(_AshForgePackaged->'$(_AshForgeDeployDir)\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Message Condition="'$(AshForgeDeploy)' == 'true' And '$(_AshForgeDeployOk)' == 'true'" Importance="high"
+             Text="AshForge SDK: deployed to $(_AshForgeDeployDir) — enable '$(AshForgeModName)' once in the game's Mods menu." />
+  </Target>
+
+  <!-- dotnet build -t:AshForgePack  →  bin\...\<YourMod>-<version>.zip, the mod folder inside. -->
+  <Target Name="AshForgePack" DependsOnTargets="Build">
+    <PropertyGroup>
+      <_AshForgeZip>$(MSBuildProjectDirectory)\$(OutputPath)$(AshForgeModFolder)-$(AshForgeModVersion).zip</_AshForgeZip>
+      <_AshForgeZipStage>$(MSBuildProjectDirectory)\$(OutputPath)mod</_AshForgeZipStage>
+    </PropertyGroup>
+    <Delete Files="$(_AshForgeZip)" />
+    <ZipDirectory SourceDirectory="$(_AshForgeZipStage)" DestinationFile="$(_AshForgeZip)" />
+    <Message Importance="high" Text="AshForge SDK: $(_AshForgeZip)" />
   </Target>
 
 </Project>

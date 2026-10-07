@@ -1,72 +1,55 @@
-using System;
-using AshForge.ModLoader;
+using System.Globalization;
+using AshForge.NativeKit;
 
 namespace MyFirstMod
 {
     /// <summary>
-    /// A mod's entry point is any public class implementing IAshForgeModContext. The loader scans your
-    /// assembly for it, constructs it, and calls Init exactly once, early — before the game parses its
-    /// definitions, so any Dec types you declare are available in time.
+    /// Your mod. The SDK finds this class (the one that implements <see cref="INativeMod"/>) and calls
+    /// <see cref="Start"/> once per game session, whichever way the player installed the mod:
     ///
-    /// You never register yourself anywhere. Implementing the interface IS the registration.
+    ///   • extracted into the game's Mods folder and enabled in the in-game Mods menu, or
+    ///   • installed through the AshForge Hub.
     ///
-    /// If Init throws, the loader catches it, attributes the fault to your mod by name, and keeps the
-    /// game running. You are not going to crash someone's colony by getting this wrong.
+    /// The host works the same either way. Settings show under ESC ▸ Mod Settings when AshForge Tools is
+    /// installed, and are kept in one file either way; save data rides beside the save in the same format
+    /// either way, so a colony can switch between the two kinds of install without losing it.
+    ///
+    /// Start runs while the game is still reading its definitions, before any map exists. Set things up here;
+    /// do the work later, from a tick, an event or a command.
     /// </summary>
-    public sealed class ModMain : IAshForgeModContext
+    public sealed class ModMain : INativeMod
     {
-        private ModSetting _greetOnLoad;
+        private ISetting _enabled;
+        private int _ticks;
 
-        public void Init(ModContext ctx)
+        public void Start(IModHost2 host)
         {
-            // ctx.ModId is your id from mod.json. Everything you register through ctx is attributed to
-            // it automatically, so you never have to repeat the string.
-            Log("hello from " + ctx.ModId);
+            // Your log: %TEMP%\<mod id>.log, and the game's own log (the only one a player without the Hub has).
+            var log = ModEntry.Logger(host.ModId, "My First Mod");
 
-            // ── A player-facing setting, drawn under ESC ▸ Mod Settings ──────────────────────────
-            // Declare it once here and KEEP THE HANDLE. Read the current value off the handle whenever
-            // you need it — don't cache the value itself, the player can change it mid-game.
-            _greetOnLoad = ctx.AddToggle(
-                key: "greet_on_load",
-                label: "Say hello in the log",
-                defaultValue: true,
-                tooltip: "Writes a line to the AshForge log when this mod starts up.");
+            // A player-facing setting. Read it where you use it (it changes live).
+            _enabled = host.AddToggle("enabled", "Count frames", true,
+                tooltip: "An example toggle. Turn it off and the counter stops.");
 
-            if (_greetOnLoad.Bool)
-                Log("greeting enabled");
+            // Periodic work. 600 frames is about 10 seconds; frames run while the game is paused, so for
+            // anything tied to the game's own time, read the game clock instead of counting calls.
+            host.ScheduleEvery(600, () => { if (_enabled.Bool) _ticks++; });
 
-            // ── Periodic work ────────────────────────────────────────────────────────────────────
-            // Prefer this over doing work every single frame. The loader staggers each mod's periodic
-            // work onto different frames so twenty mods don't all wake up on the same one.
-            ctx.ScheduleEvery(600, () => Log("still here"));
+            // State that should survive a save. Kept beside the save file, never inside it, so removing your
+            // mod can never stop a save from loading. The key is shared by every mod in the save: use your id.
+            host.RegisterSaveData(host.ModId, 1,
+                save: () => _ticks.ToString(CultureInfo.InvariantCulture),
+                load: s => _ticks = s.Existed && int.TryParse(s.Data, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) ? n : 0);
 
-            // ── A developer command ──────────────────────────────────────────────────────────────
-            // Shows up in the console in a dev session only — a player never sees it, so it is safe to
-            // leave in a shipped mod. No strip-before-release step.
-            ctx.AddDevCommand("Say hello now", () => Log("hello, on demand"));
+            // A button in the AshForge Tools console, shown only in a dev session. Safe to leave in a release.
+            host.AddDevCommand(null, "Say hello", () => log($"hello — {_ticks} ticks counted"));
 
-            // ── Reading shared state from other mods ─────────────────────────────────────────────
-            // The broker lets mods answer questions for each other. This never throws and never
-            // requires the other mod to be installed — you get a sensible default if nobody answers,
-            // so your mod still works standalone.
-            //
-            //   ColonyNetWorth worth = ctx.Query<ColonyNetWorth>(Capabilities.ColonyNetWorth);
-            //   int tier = worth.Tier;
-            //
-            // See docs/07-capabilities.md.
-        }
+            // Changing how the game behaves: Harmony is referenced and shipped for you.
+            //   new HarmonyLib.Harmony(host.ModId).PatchAll(typeof(ModMain).Assembly);
+            // Read docs/05-content-and-harmony.md first — one rule there decides whether your patch works.
 
-        // The loader writes to %TEMP%\ashloader.log. Your own log file is usually nicer for debugging;
-        // see docs/09-testing.md.
-        private static void Log(string message)
-        {
-            try
-            {
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(System.IO.Path.GetTempPath(), "myfirstmod.log"),
-                    DateTime.Now.ToString("HH:mm:ss") + "  " + message + Environment.NewLine);
-            }
-            catch { /* never let logging break the mod */ }
+            // More: docs/03-lifecycle-and-api.md (the host), docs/06-capabilities.md (talking to other mods),
+            // docs/07-testing-and-debugging.md (where your log goes and what to look for).
         }
     }
 }

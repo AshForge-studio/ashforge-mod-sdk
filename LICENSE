@@ -26,19 +26,34 @@ SCOPE — WHAT THIS LICENSE COVERS
 The MIT license above applies to the contents of this repository EXCEPT the
 files listed under EXCLUSIONS below. In particular it covers:
 
-    build/      the MSBuild props
+    build/      the MSBuild props, and the source compiled into every mod built
+                with them: build/kit/ (NativeKit) and build/adapter/ (the
+                AshForge adapter)
     template/   the starter mod
     docs/       the documentation
+    tools/, data/
     README.md
 
 You may copy the template into your own project, modify it, and ship the
 result commercially or otherwise, with no obligation beyond retaining the
-notice above. That is the intent: the template exists to be copied.
+notice above. That is the intent: the template exists to be copied, and the
+kit is compiled into your mod so that your mod can be shipped.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY
+
+    lib/native/0Harmony.dll
+
+Harmony 2.3.3 by Andreas Pardeike (https://github.com/pardeike/Harmony), used
+under the MIT License, Copyright (c) 2017 Andreas Pardeike. The game does not
+ship Harmony, so the build copies this file into your mod's Assembly/ folder
+and writes a THIRD-PARTY-NOTICES.txt beside it that carries this notice.
 
 --------------------------------------------------------------------------------
 EXCLUSIONS
 
     lib/AshLoader.dll
+    lib/AshLoader.xml   (its API documentation; same terms)
 
 The AshForge Mod Loader is not open source and is NOT covered by the MIT
 license above. It is included here solely as a REFERENCE ASSEMBLY, so that

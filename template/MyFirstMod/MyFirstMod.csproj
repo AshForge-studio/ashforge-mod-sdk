@@ -1,15 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Everything the SDK does for you lives in here: finding the game, referencing the loader and the
-       game's assemblies, and deploying the built mod into your mods folder. Keep this import first. -->
+  <!-- Everything the SDK does for you lives in here: finding the game, referencing its assemblies and
+       Harmony, generating your mod's entry point, building the AshForge adapter, and packaging the mod so it
+       works from the game's own Mods folder AND through the AshForge Hub. Keep this import first. -->
   <Import Project="..\..\build\AshForge.Mod.props" />
 
   <PropertyGroup>
-    <AssemblyName>MyFirstMod</AssemblyName>
-    <RootNamespace>MyFirstMod</RootNamespace>
-
-    <!-- The game is .NET 6 and your mod is loaded into its process. Don't change this. -->
-    <TargetFramework>net6.0</TargetFramework>
+    <!-- Your mod's identity (id, name, version, author) lives in mod.json. The folder the game knows your
+         mod by is this project's name; keep it the same from release to release. -->
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
@@ -18,8 +16,8 @@
     <AshForgeGameDir>D:\Games\Ascent of Ashes</AshForgeGameDir>
     -->
 
-    <!-- Uncomment if your mods folder isn't the default:
-    <AshForgeModsDir>D:\wherever\mods</AshForgeModsDir>
+    <!-- Uncomment to build without copying the mod into the game's Mods folder:
+    <AshForgeDeploy>false</AshForgeDeploy>
     -->
   </PropertyGroup>
 
