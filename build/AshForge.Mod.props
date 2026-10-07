@@ -202,6 +202,12 @@
     <Error Condition="'$(AshForgeModId)' == '' Or '$(AshForgeModName)' == '' Or '$(AshForgeModVersion)' == ''"
            Text="mod.json needs at least &quot;id&quot;, &quot;name&quot; and &quot;version&quot;." />
 
+    <!-- ★★ Two mods that both keep the template's names are two different MyFirstMod.Native.dll files: a player
+         who installs both gets "Assembly with same name is already loaded" and the game resets their whole mod
+         list. Rename before you share anything; AshForgePack refuses to package the template's names. -->
+    <Warning Condition="'$(AshForgeModFolder)' == 'MyFirstMod' Or '$(AshForgeModId)' == 'yourname.myfirstmod'"
+             Text="Still named MyFirstMod / yourname.myfirstmod. Rename the project (folder and .csproj) and set your own id in mod.json before you share this mod — two mods with the template's names break a player's mod list." />
+
     <Message Importance="high" Text="AshForge SDK: game at $(AshForgeGameDir)" />
 
     <!-- Reference-only, every one of them. These assemblies already exist at runtime. Copying the game's
@@ -260,7 +266,7 @@
        the loader's services by reflection, so no build of one can ever break the other. Compiled straight
        from build/adapter/ with the same references as your mod plus the loader. -->
   <Target Name="AshForgeBuildAdapter" AfterTargets="CoreCompile" Condition="'$(AshForgeAdapter)' != 'false'"
-          Inputs="$(MSBuildAllProjects);@(IntermediateAssembly)" Outputs="$(IntermediateOutputPath)$(AshForgeModFolder).Loader.dll">
+          Inputs="$(MSBuildAllProjects);@(IntermediateAssembly);$(_AshForgeAdapterSrc)NativeLoaderAdapter.cs;$(_AshForgeAdapterSrc)LoaderSpec.cs" Outputs="$(IntermediateOutputPath)$(AshForgeModFolder).Loader.dll">
     <PropertyGroup>
       <_AshForgeAdapterFile>$(IntermediateOutputPath)AshForgeAdapter.g.cs</_AshForgeAdapterFile>
     </PropertyGroup>
@@ -397,6 +403,8 @@
 
   <!-- dotnet build -t:AshForgePack  →  bin\...\<YourMod>-<version>.zip, the mod folder inside. -->
   <Target Name="AshForgePack" DependsOnTargets="Build">
+    <Error Condition="'$(AshForgeModFolder)' == 'MyFirstMod' Or '$(AshForgeModId)' == 'yourname.myfirstmod'"
+           Text="Not packaging a mod still named MyFirstMod / yourname.myfirstmod. Rename the project (folder and .csproj) and set your own id in mod.json first." />
     <PropertyGroup>
       <_AshForgeZip>$(MSBuildProjectDirectory)\$(OutputPath)$(AshForgeModFolder)-$(AshForgeModVersion).zip</_AshForgeZip>
       <_AshForgeZipStage>$(MSBuildProjectDirectory)\$(OutputPath)mod</_AshForgeZipStage>

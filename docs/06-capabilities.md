@@ -78,6 +78,15 @@ If you need several numbers, publish several capabilities.
 When your mod was started through the Hub, `TryQuery` asks the loader's broker first, then the shared
 registry. When it was started by the game's own mod system, it reads the shared registry.
 
+Through the Hub, also declare what you publish in `mod.json`, or the loader's log reports your provider as
+`REGISTERED-NOT-DECLARED`:
+
+```json
+"capabilities": {
+  "provides": [ { "id": "janedoe.hauling.capacity@1", "priority": 100, "mode": "exclusive" } ]
+}
+```
+
 ---
 
 ## What isn't available in 2.0

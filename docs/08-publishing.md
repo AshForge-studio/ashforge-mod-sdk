@@ -141,6 +141,10 @@ review to take considerably longer and to involve more back-and-forth.
 Bump `version` in `mod.json`, keep the folder name, send us the new build, and we re-sign and republish. The
 Hub shows players an update is available for first-party mods and links out for others.
 
+**If you published a code mod through the Hub before SDK 2.0**, its old build has nothing that notices a 2.0
+copy in the game's `Mods` folder, so a player with both runs both. Release the 2.0 build through the Hub
+first, and tell players to update there before also installing it in the game's `Mods` folder.
+
 If a published build turns out to be broken, or a mod reaches the end of its life, see
 [Withdrawing a bad build, and retiring a mod](11-withdrawing-and-retiring.md). The short version: we
 always roll **forward** to a new version rather than re-pointing at an old one, and a retired mod

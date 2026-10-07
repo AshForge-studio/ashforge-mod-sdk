@@ -3,6 +3,13 @@
 A walkthrough of `template/MyFirstMod`. Copy that folder somewhere of your own first — don't edit it in
 place, so you always have a clean copy to come back to.
 
+**Then rename it before anything else:** the folder and the `.csproj` (say `JaneDoeBetterHauling` and
+`JaneDoeBetterHauling.csproj`), and the `id` in `mod.json`. The project name becomes the name the game knows
+your mod and its assembly by, and two mods that both kept `MyFirstMod` are two different
+`MyFirstMod.Native.dll` files: a player who installs both gets "Assembly with same name is already loaded",
+and the game resets their whole mod list. The build warns while the template's names are still there, and
+`-t:AshForgePack` refuses to package them.
+
 You build one mod folder, and it works both ways a player can install it: in the game's own `Mods` folder,
 enabled once in the in-game **Mods** menu, or through the AshForge Hub. Your code doesn't need to know which
 route started it.

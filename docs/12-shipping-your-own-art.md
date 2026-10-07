@@ -5,7 +5,8 @@
 > The game's own mod system cannot load a mod's own textures, meshes or sounds. Only the AshForge loader can,
 > through its asset bridge — **Hub 1.0.30 and later**. A player who installs your mod straight into the
 > game's `Mods` folder, without the Hub, gets the rest of your mod but none of your art: references to it
-> don't resolve. Say so plainly on your mod's page.
+> from your definitions don't resolve. Say so plainly on your mod's page. (Code that reads a file from your
+> mod's own folder itself, at runtime, is a different matter and works either way.)
 
 Put your art in an `Assets\` folder in your project; the build packages it into your mod's `Assets\`
 folder, and warns you that such references resolve only through the Hub.
