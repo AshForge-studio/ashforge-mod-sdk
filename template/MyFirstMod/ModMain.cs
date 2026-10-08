@@ -45,8 +45,9 @@ namespace MyFirstMod
             host.AddDevCommand(null, "Say hello", () => log($"hello — {_ticks} ticks counted"));
 
             // Changing how the game behaves: Harmony is referenced and shipped for you.
-            //   new HarmonyLib.Harmony(host.ModId).PatchAll(typeof(ModMain).Assembly);
-            // Read docs/05-content-and-harmony.md first — one rule there decides whether your patch works.
+            //   GamePatches.Apply(new HarmonyLib.Harmony(host.ModId), typeof(ModMain).Assembly);
+            // Mark patch classes [GamePatch(...)], never [HarmonyPatch(...)] — the build refuses that one, because
+            // it breaks the game. Read docs/05-content-and-harmony.md first.
 
             // More: docs/03-lifecycle-and-api.md (the host), docs/06-capabilities.md (talking to other mods),
             // docs/07-testing-and-debugging.md (where your log goes and what to look for).

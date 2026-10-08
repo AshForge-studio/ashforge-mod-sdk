@@ -247,9 +247,18 @@
       <_AshForgeEntryLine Include="        public static void ApplyAll(string route) =&gt; global::AshForge.NativeKit.ModEntry.Run(typeof(AshForgeEntry).Assembly, ModId, DisplayName, route, null)%3B" />
       <_AshForgeEntryLine Include="        public static void StartFromLoader(global::System.Collections.Generic.Dictionary&lt;string, object&gt; spec) =&gt; global::AshForge.NativeKit.ModEntry.Run(typeof(AshForgeEntry).Assembly, ModId, DisplayName, &quot;AshForge loader&quot;, spec)%3B" />
       <_AshForgeEntryLine Include="    }" />
+      <_AshForgeEntryLine Include="    // Harmony first: it ships in Harmony/, outside the folder the game loads, and HarmonyHome loads it (or" />
+      <_AshForgeEntryLine Include="    // binds to one another mod already loaded). Nothing here names a Harmony type, and the mod starts through" />
+      <_AshForgeEntryLine Include="    // a NoInlining call, so the JIT meets the mod's Harmony references only after Ensure." />
       <_AshForgeEntryLine Include="    public class AshForgeBootstrap : global::Dec.Dec" />
       <_AshForgeEntryLine Include="    {" />
-      <_AshForgeEntryLine Include="        public override void PostLoad(global::System.Action&lt;string&gt; reporter) =&gt; AshForgeEntry.ApplyAll(&quot;game mod loader&quot;)%3B" />
+      <_AshForgeEntryLine Include="        public override void PostLoad(global::System.Action&lt;string&gt; reporter)" />
+      <_AshForgeEntryLine Include="        {" />
+      <_AshForgeEntryLine Include="            try { if (global::AshForge.NativeKit.HarmonyHome.Ensure(AshForgeEntry.DisplayName, AshForgeEntry.ModId + &quot;.log&quot;)) Start()%3B }" />
+      <_AshForgeEntryLine Include="            catch (global::System.Exception e) { global::AshForge.NativeKit.HarmonyHome.Report(AshForgeEntry.DisplayName, AshForgeEntry.ModId + &quot;.log&quot;, &quot;could not start: &quot; + e)%3B }" />
+      <_AshForgeEntryLine Include="        }" />
+      <_AshForgeEntryLine Include="        [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]" />
+      <_AshForgeEntryLine Include="        private static void Start() =&gt; AshForgeEntry.ApplyAll(&quot;game mod loader&quot;)%3B" />
       <_AshForgeEntryLine Include="    }" />
       <_AshForgeEntryLine Include="}" />
     </ItemGroup>
@@ -310,12 +319,46 @@
     </ItemGroup>
   </Target>
 
+  <!-- ── Harmony scan ────────────────────────────────────────────────────────────────────────────
+       The game reads every attribute of every type in every mod BEFORE any mod code runs, and Harmony is not
+       loaded yet at that moment (it ships in Harmony/, see the package layout below). A type carrying
+       [HarmonyPatch] — or deriving from / implementing a Harmony type — makes that read fail, and the game
+       breaks for every player who enables the mod. So the build refuses one. Mark patch classes with the
+       SDK's [GamePatch] and apply them with GamePatches.Apply: same conventions, no Harmony attribute.
+       The checker (tools/HarmonyScanCheck, source in this SDK) is built on first use. -->
+  <Target Name="AshForgeHarmonyScan" AfterTargets="CoreCompile" Condition="'@(IntermediateAssembly)' != ''">
+    <PropertyGroup>
+      <_AshForgeScanDir>$(_AshForgeSdkRoot)tools\HarmonyScanCheck\</_AshForgeScanDir>
+      <_AshForgeScanOut>$(_AshForgeScanDir)bin\out\</_AshForgeScanOut>
+      <_AshForgeDotnet>$(DOTNET_HOST_PATH)</_AshForgeDotnet>
+      <_AshForgeDotnet Condition="'$(_AshForgeDotnet)' == ''">dotnet</_AshForgeDotnet>
+    </PropertyGroup>
+    <MSBuild Projects="$(_AshForgeScanDir)HarmonyScanCheck.csproj" Targets="Restore;Build"
+             Properties="Configuration=Release;OutDir=$(_AshForgeScanOut);MSBuildRestoreSessionId=$([System.Guid]::NewGuid())"
+             RemoveProperties="TargetFramework;RuntimeIdentifier;AssemblyName;OutputPath;IntermediateOutputPath;AshForgeModFolder"
+             Condition="!Exists('$(_AshForgeScanOut)HarmonyScanCheck.dll')" />
+    <Exec Command="&quot;$(_AshForgeDotnet)&quot; &quot;$(_AshForgeScanOut)HarmonyScanCheck.dll&quot; &quot;@(IntermediateAssembly->'%(FullPath)')&quot;"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_AshForgeScanExit" />
+      <Output TaskParameter="ConsoleOutput" ItemName="_AshForgeScanLines" />
+    </Exec>
+    <ItemGroup>
+      <_AshForgeScanViolation Include="@(_AshForgeScanLines)" Condition="$([System.String]::Copy('%(Identity)').StartsWith('VIOLATION '))" />
+    </ItemGroup>
+    <Error Condition="'@(_AshForgeScanViolation)' != ''"
+           Text="$([System.String]::Copy('%(_AshForgeScanViolation.Identity)').Substring(10)) — the game reads type attributes before Harmony is loaded, so this breaks the game for every player. Use [GamePatch] (same arguments) and GamePatches.Apply instead of [HarmonyPatch] and PatchAll. See docs/05." />
+    <Error Condition="'$(_AshForgeScanExit)' != '0' And '@(_AshForgeScanViolation)' == ''"
+           Text="AshForge SDK: the Harmony scan could not check $(TargetFileName) (exit $(_AshForgeScanExit)): @(_AshForgeScanLines, ' | ')" />
+  </Target>
+
   <!-- ── Package ─────────────────────────────────────────────────────────────────────────────────
        After a successful build, lay out the finished mod in bin\...\mod\<YourMod>\:
 
            About.xml                     the game's mod manifest (from mod.json)
            Assembly/<YourMod>.Native.dll your mod — what the game's mod loader runs
-           Assembly/0Harmony.dll         Harmony 2.3.3 (the game does not ship it)
+           Harmony/0Harmony.dll          Harmony 2.3.3 (the game does not ship it). NOT in Assembly/: the game
+                                         loads that folder, and next to another mod's different 0Harmony.dll
+                                         it deletes the player's mod list. Your mod loads it itself.
            Dec/Bootstrap.xml             starts your mod in the game's mod loader
            Dec/*  and  Decs/*            your content, in both: the game reads Dec/, the AshForge loader Decs/
            Assemblies/<YourMod>.Loader.dll  the AshForge adapter — the only file the loader reads
@@ -333,7 +376,7 @@
       <_AshForgeXmlName>$(AshForgeModName.Replace('&amp;', '&amp;amp;').Replace('&lt;', '&amp;lt;').Replace('&gt;', '&amp;gt;'))</_AshForgeXmlName>
       <_AshForgeXmlAuthor>$(AshForgeModAuthor.Replace('&amp;', '&amp;amp;').Replace('&lt;', '&amp;lt;').Replace('&gt;', '&amp;gt;'))</_AshForgeXmlAuthor>
       <_AshForgeXmlVersion>$(AshForgeModVersion.Replace('&amp;', '&amp;amp;').Replace('&lt;', '&amp;lt;').Replace('&gt;', '&amp;gt;'))</_AshForgeXmlVersion>
-      <_AshForgeHarmonyNotice>Assembly/0Harmony.dll is Harmony 2.3.3 by Andreas Pardeike (https://github.com/pardeike/Harmony), used under the MIT License. Copyright (c) 2017 Andreas Pardeike.</_AshForgeHarmonyNotice>
+      <_AshForgeHarmonyNotice>Harmony/0Harmony.dll is Harmony 2.3.3 by Andreas Pardeike (https://github.com/pardeike/Harmony), used under the MIT License. Copyright (c) 2017 Andreas Pardeike.</_AshForgeHarmonyNotice>
     </PropertyGroup>
     <RemoveDir Directories="$(AshForgePackageDir)" />
 
@@ -355,7 +398,7 @@
 
     <WriteLinesToFile File="$(AshForgePackageDir)\About.xml" Lines="@(_AshForgeAbout)" Overwrite="true" />
     <Copy SourceFiles="@(IntermediateAssembly->'$(TargetDir)%(Filename)%(Extension)')" DestinationFolder="$(AshForgePackageDir)\Assembly" />
-    <Copy SourceFiles="$(AshForgeSdkLib)native\0Harmony.dll" DestinationFolder="$(AshForgePackageDir)\Assembly" />
+    <Copy SourceFiles="$(AshForgeSdkLib)native\0Harmony.dll" DestinationFolder="$(AshForgePackageDir)\Harmony" />
     <WriteLinesToFile File="$(AshForgePackageDir)\Dec\Bootstrap.xml" Lines="@(_AshForgeBoot)" Overwrite="true" />
     <Copy SourceFiles="@(_AshForgeContent)" DestinationFiles="@(_AshForgeContent->'$(AshForgePackageDir)\Dec\%(RecursiveDir)%(Filename)%(Extension)')" />
     <Copy SourceFiles="@(_AshForgeContent)" DestinationFiles="@(_AshForgeContent->'$(AshForgePackageDir)\Decs\%(RecursiveDir)%(Filename)%(Extension)')" />

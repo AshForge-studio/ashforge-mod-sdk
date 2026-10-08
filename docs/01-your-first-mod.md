@@ -185,7 +185,7 @@ A `null` category groups it under your mod id.
 **Harmony, commented out.**
 
 ```csharp
-//   new HarmonyLib.Harmony(host.ModId).PatchAll(typeof(ModMain).Assembly);
+//   GamePatches.Apply(new HarmonyLib.Harmony(host.ModId), typeof(ModMain).Assembly);
 ```
 
 Harmony is referenced and shipped for you. Read [Content, decs and Harmony](05-content-and-harmony.md)

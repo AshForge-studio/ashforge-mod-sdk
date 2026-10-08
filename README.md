@@ -39,7 +39,7 @@ the game's `Mods` folder:
 <game>\Mods\MyFirstMod\
   About.xml                        the game's mod manifest, written from mod.json
   Assembly\MyFirstMod.Native.dll   your code
-  Assembly\0Harmony.dll            Harmony 2.3.3
+  Harmony\0Harmony.dll             Harmony 2.3.3 (outside Assembly\: see docs/05)
   Dec\Bootstrap.xml                starts your mod in the game's mod system
   Assemblies\MyFirstMod.Loader.dll the AshForge adapter (Hub route only)
   mod.json                         the AshForge manifest
@@ -78,7 +78,7 @@ just the default path. If it still misses you, the override always wins.
 | `build/kit/` | NativeKit — the API your mod codes against. Compiled into your mod as source. |
 | `build/adapter/` | Source of the small adapter that lets the AshForge loader start your mod. |
 | `lib/AshLoader.dll` | The AshForge loader, used only to compile the adapter. Never shipped in your mod. |
-| `lib/native/0Harmony.dll` | Harmony 2.3.3 (MIT). Shipped in your mod's `Assembly\` folder. |
+| `lib/native/0Harmony.dll` | Harmony 2.3.3 (MIT). Shipped in your mod's `Harmony\` folder. |
 | `template/MyFirstMod/` | A working mod. Copy it and start editing. |
 | `docs/` | The manual. |
 

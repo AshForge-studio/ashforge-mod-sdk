@@ -114,7 +114,8 @@ nothing for you to do — signing handles it.
   About.xml                     the game's manifest, generated from mod.json
   Assembly/
     <Project>.Native.dll        your code
-    0Harmony.dll                Harmony 2.3.3
+  Harmony/
+    0Harmony.dll                Harmony 2.3.3 — outside Assembly/, see docs/05
   Dec/
     Bootstrap.xml               generated; starts your mod in the game's mod system
     ...                         your Decs\ content

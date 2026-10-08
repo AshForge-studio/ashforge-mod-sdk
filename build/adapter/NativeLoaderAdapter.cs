@@ -77,7 +77,8 @@ namespace AshForge.NativeAdapter
         }
 
         /// <summary>
-        /// Load 0Harmony (if nothing has yet) and the core from <paramref name="dir"/> into the game's context; an assembly
+        /// Load 0Harmony (if nothing has yet; from <c>Harmony/</c> beside <paramref name="dir"/>, else <paramref name="dir"/>)
+        /// and the core from <paramref name="dir"/> into the game's context; an assembly
         /// already loaded under that name is reused, never loaded twice. Null if the core is missing.
         /// </summary>
         private Assembly Load(string dir)
@@ -86,10 +87,20 @@ namespace AshForge.NativeAdapter
             Assembly core = null;
             foreach (string name in new[] { "0Harmony", CoreAssembly })
             {
-                Assembly have = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == name);
+                // ★ The game context's assemblies: an assembly of this name in another context (the loader's own, a tool's)
+                //   is not what the core's references bind to.
+                Assembly have = gameCtx.Assemblies.FirstOrDefault(a => a.GetName().Name == name);
                 if (have == null)
                 {
                     string path = Path.Combine(dir, name + ".dll");
+                    // ★★ 2026-10-08: Harmony ships in <mod>/Harmony/, outside the folder the game loads — a second,
+                    //   different 0Harmony.dll in Assembly/ makes the game delete the player's mod list. Older native
+                    //   builds still carry it in Assembly/; either is the same pinned file.
+                    if (name == "0Harmony")
+                    {
+                        string moved = Path.Combine(Path.GetDirectoryName(dir), "Harmony", name + ".dll");
+                        if (File.Exists(moved)) path = moved;
+                    }
                     if (!File.Exists(path))
                     {
                         if (name == "0Harmony") continue;   // a mod that does not patch ships no Harmony

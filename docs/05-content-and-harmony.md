@@ -76,32 +76,57 @@ before writing one.
 ## Behaviour: Harmony
 
 The game doesn't ship [Harmony](https://harmony.pardeike.net/), so the SDK does: Harmony **2.3.3** (MIT),
-referenced for you and copied into your mod's `Assembly\` folder. Every SDK mod carries a byte-identical
-copy, and that's fine — the first one loaded is the one every mod uses. **Never swap in another Harmony
-build**, not even another build of 2.3.3. When the game finds a second `0Harmony.dll` that isn't byte-identical
-to the first, it stops loading mods and deletes the player's mod list (`ActiveMods.xml` and `ModOrder.xml`).
-Nothing looks wrong in that session; at the next launch every mod is unticked, and ticking them again restarts
-into the same wipe. Which mod loads first only decides whether the current session still works.
+referenced for you and packaged as `Harmony\0Harmony.dll` — **not** in `Assembly\`. Your mod loads it itself
+when it starts, or uses the copy another mod already loaded, so every mod shares one Harmony.
 
-Patch in `Start`:
+**Why not `Assembly\`.** The game loads every dll in every enabled mod's `Assembly\` folder. When two of them
+have the same name but aren't byte-identical — two builds of `0Harmony.dll` from two different mods — the
+game stops loading mods and **deletes the player's mod list** (`ActiveMods.xml` and `ModOrder.xml`). Nothing
+looks wrong in that session; at the next launch every mod is unticked, and ticking them again restarts into
+the same wipe. A mod that keeps Harmony out of `Assembly\` can never be half of that pair.
+
+### ★★ Mark patch classes with `[GamePatch]`, never `[HarmonyPatch]`
+
+The game reads every attribute on every type of every mod **before any mod code runs** — before your mod has
+loaded Harmony. A class carrying `[HarmonyPatch]` makes that read fail, and **the game breaks for every player
+who enables your mod** (a flood of errors, nothing works). The build refuses one, and also refuses a type that
+derives from or implements a Harmony type.
+
+The SDK's `[GamePatch]` takes the same arguments and follows the same conventions, without tying the class
+to Harmony. Apply your patches in `Start`:
 
 ```csharp
+using AshForge.NativeKit;
+
 public void Start(IModHost2 host)
 {
-    new HarmonyLib.Harmony(host.ModId).PatchAll(typeof(ModMain).Assembly);
+    GamePatches.Apply(new HarmonyLib.Harmony(host.ModId), typeof(ModMain).Assembly);
 }
-```
 
-Use your mod id as the Harmony id — it's unique, and it makes conflicts traceable to you. Pass your own
-assembly to `PatchAll` explicitly.
-
-```csharp
-[HarmonyLib.HarmonyPatch(typeof(SomeGameClass), nameof(SomeGameClass.SomeMethod))]
+[GamePatch(typeof(SomeGameClass), nameof(SomeGameClass.SomeMethod))]
 static class MyPatch
 {
     static void Postfix(SomeGameClass __instance) { ... }
 }
 ```
+
+| Harmony | SDK |
+|---|---|
+| `[HarmonyPatch(typeof(T), "M")]` on the class | `[GamePatch(typeof(T), "M")]` |
+| `[HarmonyPatch(typeof(T), "M", new[] { typeof(int) })]` | `[GamePatch(typeof(T), "M", new[] { typeof(int) })]` |
+| `[HarmonyPatch(typeof(T), "P", MethodType.Setter)]` | `[GamePatch(typeof(T), "P", GamePatchKind.Setter)]` (also `Getter`, `Constructor`) |
+| `[HarmonyPatch]` + `TargetMethod()` / `TargetMethods()` | `[GamePatch]` + the same method |
+| `harmony.PatchAll(assembly)` | `GamePatches.Apply(harmony, assembly)` |
+
+Patch methods are found by name — `Prefix`, `Postfix`, `Transpiler`, `Finalizer` — and an optional `Prepare()`
+returning `false` skips the class. Every Harmony injection (`__instance`, `__result`, `__state`, `___field`,
+`ref` arguments) works as usual, and attributes on the **methods** (`[HarmonyPriority]`, `[HarmonyBefore]`) are
+fine: the game only reads attributes on types. Like `PatchAll`, `Apply` throws on the first class it can't
+apply, naming it.
+
+Use your mod id as the Harmony id — it's unique, and it makes conflicts traceable to you. Never ship a
+different Harmony build: if another mod has already loaded an older Harmony than 2.3.3, your mod doesn't
+start and its log names the file responsible; the game and the other mods keep working.
 
 ### ★★ Don't patch what the AshForge loader patches
 

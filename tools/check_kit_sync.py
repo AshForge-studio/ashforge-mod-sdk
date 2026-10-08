@@ -24,6 +24,10 @@ FILES = {
     "build/kit/NativeKit2.cs": "examples/NativeKit/NativeKit2.cs",
     "build/kit/DelegateHost.cs": "examples/NativeKit/DelegateHost.cs",
     "build/kit/ModEntry.cs": "examples/NativeKit/ModEntry.cs",
+    "build/kit/HarmonyHome.cs": "examples/NativeKit/HarmonyHome.cs",
+    "build/kit/GamePatches.cs": "examples/NativeKit/GamePatches.cs",
+    "tools/HarmonyScanCheck/Program.cs": "tools/HarmonyScanCheck/Program.cs",
+    "tools/HarmonyScanCheck/HarmonyScanCheck.csproj": "tools/HarmonyScanCheck/HarmonyScanCheck.csproj",
     "build/adapter/NativeLoaderAdapter.cs": "examples/NativeAdapter/NativeLoaderAdapter.cs",
     "build/adapter/LoaderSpec.cs": "examples/NativeKit/LoaderSpec.cs",
 }
