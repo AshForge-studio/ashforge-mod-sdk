@@ -78,8 +78,10 @@ before writing one.
 The game doesn't ship [Harmony](https://harmony.pardeike.net/), so the SDK does: Harmony **2.3.3** (MIT),
 referenced for you and copied into your mod's `Assembly\` folder. Every SDK mod carries a byte-identical
 copy, and that's fine — the first one loaded is the one every mod uses. **Never swap in another Harmony
-build:** two different assemblies named `0Harmony` in one process break the patches of every mod that uses
-either.
+build**, not even another build of 2.3.3. When the game finds a second `0Harmony.dll` that isn't byte-identical
+to the first, it stops loading mods and deletes the player's mod list (`ActiveMods.xml` and `ModOrder.xml`).
+Nothing looks wrong in that session; at the next launch every mod is unticked, and ticking them again restarts
+into the same wipe. Which mod loads first only decides whether the current session still works.
 
 Patch in `Start`:
 
