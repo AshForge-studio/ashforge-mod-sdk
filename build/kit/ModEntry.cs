@@ -97,13 +97,15 @@ namespace AshForge.NativeKit
             try
             {
                 Assembly ash = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "AshHarmony");
-                if (ash == null) return;   // no AshForge loader in the process: nothing to collide with
+                if (ash == null) { log("[harmony] collision check: no AshForge loader in the process, nothing to collide with."); return; }
                 var theirs = new HashSet<MethodBase>(Patched(ash.GetType("HarmonyLib.Harmony")));
-                if (theirs.Count == 0) return;
-                foreach (MethodBase m in Patched(typeof(HarmonyLib.Harmony)))
+                var ours = Patched(typeof(HarmonyLib.Harmony)).Where(m => PatchedBy(m, mod)).ToList();
+                int shared = ours.Count(theirs.Contains);
+                // Said every time, so a silent guard can be told from one that never ran.
+                log($"[harmony] collision check: {ours.Count} game methods patched by this mod, {theirs.Count} through the AshForge loader, {shared} shared.");
+                foreach (MethodBase m in ours)
                 {
-                    // Only this mod's own patches: another native mod's collision is reported by that mod.
-                    if (!theirs.Contains(m) || !PatchedBy(m, mod)) continue;
+                    if (!theirs.Contains(m)) continue;
                     string name = m.DeclaringType?.FullName + "." + m.Name;
                     lock (Reported) if (!Reported.Add(mod.GetName().Name + "|" + name)) continue;
                     log($"[harmony] ✗ {name} is patched by this mod AND through the AshForge loader (the loader itself, or a mod it loaded). Two copies of Harmony cannot "
